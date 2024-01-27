@@ -3,34 +3,45 @@
 #define AP_SSID "75kV-2G"
 #define AP_PASS "qwert35967200LOX"
 
+#include <EEPROM.h>
 #include <GyverPortal.h>
 GyverPortal ui;
-
+byte switchState;
+#define enableSignalSleepTime 0x01
+#define BUT_DOWN_FLAG              0x02
+#define BUT_FORWARD_FLAG           0x04
+#define BUT_BACKWARD_FLAG          0x08
+#define BUT_STRONG_FLAG            0x10
+#define BUT_WEAK_FLAG              0x20
+#define INITIALIZATION_FLAG        0x40
+#define STOP_FLAG                  0x80
+bool eepromNeedChanged = false;
+bool LEDNeedChanged = false;
 // Текущие дата и время
 GPdate valDate;
 GPtime valTime;
-bool ledIsON;
-int brightnessLedIsON;
+bool ledIsON = false;
+byte brightnessLedIsON;
 //Сигнал "Пора спать"
-bool enableSignalSleepTime;
-int brightnessSignalSleepTime;
+byte brightnessSignalSleepTime;
 GPtime timeSignalSleepTime;
 
 //Конструктор страницы
 void build() {
   GP.BUILD_BEGIN(GP_DARK);
-  GP.PAGE_TITLE("Умный Ночник", "SmartNightLight");
-  GP.TITLE("SmartNightLight или Умный Ночник", "t1");
+  GP.PAGE_TITLE("Умный Филин Ночник", "SmartNightLight");
+  GP.TITLE("SmartNightLight или Умный Филин Ночник", "t1");
   GP.HR(); // Текущие дата и время
   GP.DATE("date", valDate); GP.BREAK();
   GP.TIME("time", valTime); GP.BREAK();
   GP.LABEL("Включить ");
   GP.SWITCH("ledIsON", ledIsON); GP.BREAK();
-  GP.SLIDER("brightnessLedIsON", brightnessLedIsON, 0, 1023);
+  EEPROM.get(1, brightnessLedIsON);
+  GP.SLIDER("brightnessLedIsON", brightnessLedIsON, 0, 255);
   GP.HR(); //Сигнал "Пора спать"
   GP.LABEL("Сигнал \"Пора спать\" ");
-  GP.SWITCH("enableSignalSleepTime", enableSignalSleepTime); GP.BREAK();
-  GP.SLIDER("brightnessSignalSleepTime", brightnessSignalSleepTime, 0, 1023); GP.BREAK();
+  GP.SWITCH("enableSignalSleepTime", switchState & enableSignalSleepTime); GP.BREAK();
+  GP.SLIDER("brightnessSignalSleepTime", brightnessSignalSleepTime, 0, 255); GP.BREAK();
   GP.TIME("timeSignalSleepTime", timeSignalSleepTime);
   GP.HR();
   GP.BUILD_END();
@@ -46,14 +57,24 @@ void build() {
 WiFiUDP ntpUDP; //Объект ntp
 NTPClient timeClient(ntpUDP, NTP_ADDRESS, NTP_OFFSET, NTP_INTERVAL);
 
-int ledPin = 0; //GPIO 2 (D3)
-void SetLedBrightness(int brightness){
+int ledPin = 2; //GPIO 0 (D3) 2-для отладки
+void SetLedBrightness(byte brightness){
   analogWriteFreq(1000); //(100.. 40000 Гц)
-  analogWriteResolution(10); //(4...16 бит)
+  analogWriteResolution(8); //(4...16 бит)
   analogWrite(ledPin, brightness);
 }
 
+void WriteEeprom(){
+  if (eepromNeedChanged){
+    EEPROM.put(0, switchState); //Сохраняем состояние свичей
+    EEPROM.commit();
+    eepromNeedChanged = false;
+  }
+}
+
 void setup() {
+  analogWriteFreq(1000); //(100.. 40000 Гц)
+  analogWriteResolution(8); //(4...16 бит)
   SetLedBrightness(0);
   timeClient.begin(); //Запускаем клиент времени
   timeClient.setTimeOffset(10800); //Указываем смещение по времени от Гринвича. Москва GMT+3 => 60*60*3 = 10800
@@ -66,7 +87,8 @@ void setup() {
     Serial.print(".");
   }
   Serial.println(WiFi.localIP());
-
+  EEPROM.begin(4096); //Активируем EEPROM
+  EEPROM.get(0, switchState); //Читаем состояния переключателей
   // подключаем конструктор и запускаем
   ui.attachBuild(build);
   ui.attach(action);
@@ -75,6 +97,7 @@ void setup() {
 
 void action() {
   // был клик по компоненту
+  bool state;
   if (ui.click()) {
     // Текущие дата и время
     if (ui.clickDate("date", valDate)) {
@@ -89,20 +112,29 @@ void action() {
       Serial.print("Включен удаленно: ");
       Serial.println(ledIsON);
     }
+    if (ui.clickInt("brightnessLedIsON", brightnessLedIsON)) {
+      Serial.print("Яркость сигнала \"Пора спать\": ");
+      EEPROM.put(1, brightnessLedIsON);
+      Serial.println(brightnessLedIsON);
+    }
     //Сигнал "Пора спать"
-    if (ui.clickBool("enableSignalSleepTime", enableSignalSleepTime)) {
+    if (ui.clickBool("enableSignalSleepTime", state)) {
+      if (state) switchState |= enableSignalSleepTime; else switchState &= ~enableSignalSleepTime;
       Serial.print("Сигнал \"Пора спать\": ");
-      Serial.println(enableSignalSleepTime);
+      Serial.println(switchState & enableSignalSleepTime);
     }
     if (ui.clickInt("brightnessSignalSleepTime", brightnessSignalSleepTime)) {
       Serial.print("Яркость сигнала \"Пора спать\": ");
       Serial.println(brightnessSignalSleepTime);
-      SetLedBrightness(brightnessSignalSleepTime);
     }
     if (ui.clickTime("timeSignalSleepTime", timeSignalSleepTime)) {
       Serial.print("Время срабатывания сигнала \"Пора спать\": ");
       Serial.println(timeSignalSleepTime.encode());
     }
+    Serial.print("Состояние переключателей: ");
+    Serial.println(switchState);
+    eepromNeedChanged = true;
+    LEDNeedChanged = true;
   }
 }
 
@@ -118,7 +150,8 @@ void WiFiupd(){
     }
     else //Пробуем подключиться заново
     {
-        WiFi.begin(AP_SSID, AP_PASS);
+      Serial.println("Переподключаемся к Wifi");
+      WiFi.begin(AP_SSID, AP_PASS);
     }
 }
 
@@ -126,4 +159,8 @@ void loop() {
   ui.tick();
   WiFiupd();
   delay(1000);
+  if (LEDNeedChanged){
+    if (ledIsON) SetLedBrightness(brightnessLedIsON); else SetLedBrightness(0);
+    LEDNeedChanged = false;
+  }
 }
