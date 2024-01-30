@@ -20,26 +20,27 @@ byte switchState;
 #define FLAG7 0x40
 #define FLAG8 0x80
 bool eepromNeedChanged = false;
-bool LEDNeedChanged = false;
 time_t epochTime;
 struct tm *ptm;
 // Текущие дата и время
 GPdate valDate;
 GPtime valTime;
+uint16_t eepromWriteTime;
 bool ledIsON = false;
-byte brightnessLedIsON;
+byte brightnessLedIsON = 160;
 //Время отхода ко сну
-uint16_t sleepTime;
+uint16_t sleepTime = 1000;
 uint32_t sleepTimespan;
-byte lengthSleepTime;
+byte lengthSleepTime = 90;
 //Сигнал "Пора спать"
-byte brightnessSignalSleepTime;
+byte brightnessSignalSleepTime = 255;
 //Затухание при засыпании
 //Имитация рассвета
-uint16_t sunriseTime;
-byte lengthSunriseTime;
-byte lengthSunTime;
-byte maxBrightnessSunTime;
+uint16_t sunriseTime = 700;
+uint32_t sunriseTimespan;
+byte lengthSunriseTime = 60;
+byte lengthSunTime = 30;
+byte maxBrightnessSunTime = 255;
 
 //Конструктор страницы
 void build() {
@@ -76,9 +77,10 @@ void build() {
   GP.LABEL("Продолжительность рассвета, мин."); //Нарастание яркости линейно от начала до конца периода до максимальной
   EEPROM.get(8, lengthSunriseTime);
   GP.SLIDER("lengthSunriseTime", lengthSunriseTime, 0, 255); GP.BREAK();
-  GP.LABEL("Продолжительность после рассвета рассвета, мин."); //Сколько еще гореть на максимальной яркости
+  GP.LABEL("Продолжительность после рассвета, мин."); //Сколько еще гореть на максимальной яркости
   EEPROM.get(9, lengthSunTime);
   GP.SLIDER("lengthSunTime", lengthSunTime, 0, 255); GP.BREAK();
+  sunriseTimespan = sunriseTime * 10000 + ((lengthSunriseTime + lengthSunTime) / 60.0) * 100;
   GP.LABEL("&#128262;Максимальная яркость рассвета"); GP.BREAK();
   EEPROM.get(10, maxBrightnessSunTime);
   GP.SLIDER("maxBrightnessSunTime", maxBrightnessSunTime, 0, 255); GP.BREAK();
@@ -97,17 +99,24 @@ WiFiUDP ntpUDP; //Объект ntp
 NTPClient timeClient(ntpUDP, NTP_ADDRESS, NTP_OFFSET, NTP_INTERVAL);
 
 int ledPin = 2; //GPIO 0 (D3) 2-для отладки
+byte LEDNeedChanged;
 void SetLedBrightness(byte brightness){
-  analogWriteFreq(1000); //(100.. 40000 Гц)
-  analogWriteResolution(8); //(4...16 бит)
-  analogWrite(ledPin, brightness);
+  if (LEDNeedChanged != brightness){
+    analogWriteFreq(1000); //(100.. 40000 Гц)
+    analogWriteResolution(8); //(4...16 бит)
+    analogWrite(ledPin, brightness);
+    LEDNeedChanged = brightness;
+  }
 }
 
 void WriteEeprom(){
   if (eepromNeedChanged){
-    EEPROM.put(0, switchState); //Сохраняем состояние свичей
-    EEPROM.commit();
-    eepromNeedChanged = false;
+    if (checkTimespan((eepromWriteTime + 600) * 10000 + eepromWriteTime))
+    {
+      EEPROM.put(0, switchState); //Сохраняем состояние свичей
+      EEPROM.commit();
+      eepromNeedChanged = false;
+    }
   }
 }
 
@@ -190,88 +199,79 @@ void action() {
   if (ui.click()) {
     // Текущие дата и время
     if (ui.clickDate("date", valDate)) {
-      Serial.print("Date: ");
-      Serial.println(valDate.encode());
     }
     if (ui.clickTime("time", valTime)) {
-      Serial.print("Time: ");
-      Serial.println(valTime.encode());
     }
     if (ui.clickBool("ledIsON", ledIsON)) {
-      Serial.print("Включен удаленно: ");
-      Serial.println(ledIsON);
     }
     if (ui.clickInt("brightnessLedIsON", brightnessLedIsON)) {
-      Serial.print("Яркость сигнала \"Пора спать\": ");
       EEPROM.put(1, brightnessLedIsON);
-      Serial.println(brightnessLedIsON);
+      eepromNeedChanged = true;
+      eepromWriteTime = valTime.hour * 100 + valTime.minute;
     }
     //Время отхода ко сну
     if (ui.clickBool("enableSleepTime", state)) {
       if (state) switchState |= enableSleepTime; else switchState &= ~enableSleepTime;
-      Serial.print("Отход ко сну: ");
-      Serial.println(switchState & enableSleepTime);
+      eepromNeedChanged = true;
+      eepromWriteTime = valTime.hour * 100 + valTime.minute;
     }
     if (ui.clickTime("sleepTime", tempTime)) {
       sleepTime = tempTime.hour * 100 + tempTime.minute;
       EEPROM.put(2, sleepTime);
-      Serial.print("Время отхода ко сну: ");
-      Serial.println(tempTime.encode());
+      eepromNeedChanged = true;
+      eepromWriteTime = valTime.hour * 100 + valTime.minute;
     }
     if (ui.clickInt("lengthSleepTime", lengthSleepTime)) {
       EEPROM.put(4, lengthSleepTime);
-      Serial.print("Продолжительность отхода ко сну, мин.: ");
-      Serial.println(lengthSleepTime);
+      eepromNeedChanged = true;
+      eepromWriteTime = valTime.hour * 100 + valTime.minute;
     }
     sleepTimespan = sleepTime * 10000 + (lengthSleepTime / 60.0) * 100;
     //Сигнал "Пора спать"
     if (ui.clickBool("enableSignalSleepTime", state)) {
       if (state) switchState |= enableSignalSleepTime; else switchState &= ~enableSignalSleepTime;
-      Serial.print("Сигнал \"Пора спать\": ");
-      Serial.println(switchState & enableSignalSleepTime);
+      eepromNeedChanged = true;
+      eepromWriteTime = valTime.hour * 100 + valTime.minute;
     }
     if (ui.clickInt("brightnessSignalSleepTime", brightnessSignalSleepTime)) {
       EEPROM.put(5, brightnessSignalSleepTime);
-      Serial.print("Яркость сигнала \"Пора спать\": ");
-      Serial.println(brightnessSignalSleepTime);
+      eepromNeedChanged = true;
+      eepromWriteTime = valTime.hour * 100 + valTime.minute;
     }
     //Затухание при засыпании
     if (ui.clickBool("enableAttenuationSleepTime", state)) {
       if (state) switchState |= enableAttenuationSleepTime; else switchState &= ~enableAttenuationSleepTime;
-      Serial.print("Затухание при засыпании: ");
-      Serial.println(switchState & enableAttenuationSleepTime);
+      eepromNeedChanged = true;
+      eepromWriteTime = valTime.hour * 100 + valTime.minute;
     }
     //Имитация рассвета
     if (ui.clickBool("enableSunriseTime", state)) {
       if (state) switchState |= enableSunriseTime; else switchState &= ~enableSunriseTime;
-      Serial.print("Имитация рассвета: ");
-      Serial.println(switchState & enableSunriseTime);
+      eepromNeedChanged = true;
+      eepromWriteTime = valTime.hour * 100 + valTime.minute;
     }
     if (ui.clickTime("sunriseTime", tempTime)) {
       sunriseTime = tempTime.hour * 100 + tempTime.minute;
       EEPROM.put(6, sunriseTime);
-      Serial.print("Время Имитация рассвета: ");
-      Serial.println(tempTime.encode());
+      eepromNeedChanged = true;
+      eepromWriteTime = valTime.hour * 100 + valTime.minute;
     }
     if (ui.clickInt("lengthSunriseTime", lengthSunriseTime)) {
       EEPROM.put(8, lengthSunriseTime);
-      Serial.print("Продолжительность рассвета, мин.: ");
-      Serial.println(lengthSunriseTime);
+      eepromNeedChanged = true;
+      eepromWriteTime = valTime.hour * 100 + valTime.minute;
     }
     if (ui.clickInt("lengthSunTime", lengthSunTime)) {
       EEPROM.put(9, lengthSunTime);
-      Serial.print("Продолжительность после рассвета рассвета, мин.: ");
-      Serial.println(lengthSunTime);
+      eepromNeedChanged = true;
+      eepromWriteTime = valTime.hour * 100 + valTime.minute;
     }
+    sunriseTimespan = sunriseTime * 10000 + ((lengthSunriseTime + lengthSunTime) / 60.0) * 100;
     if (ui.clickInt("maxBrightnessSunTime", maxBrightnessSunTime)) {
       EEPROM.put(10, maxBrightnessSunTime);
-      Serial.print("Максимальная яркость рассвета: ");
-      Serial.println(maxBrightnessSunTime);
+      eepromNeedChanged = true;
+      eepromWriteTime = valTime.hour * 100 + valTime.minute;
     }
-    Serial.print("Состояние переключателей: ");
-    Serial.println(switchState);
-    eepromNeedChanged = true;
-    LEDNeedChanged = true;
   }
 }
 
@@ -308,19 +308,55 @@ bool checkTimespan(uint32_t timespan){
   return false;
 }
 
+uint32_t totalMinutes(uint32_t timespan){
+  if (timespan > 0 | timespan < 23602360){
+    uint16_t t1 = timespan / 10000;
+    uint8_t t1h = t1 / 100;
+    uint8_t t1m = t1 % 100;
+    uint16_t t2 = timespan % 10000;
+    uint8_t t2h = t2 / 100;
+    uint8_t t2m = t2 % 100;
+    return (t1 < t2) ? ((t2h * 60 + t2m) - (t1h * 60 + t1m)) : (24 * 60 - (t1h * 60 + t1m) + (t2h * 60 + t2m));
+  }
+  return 0;
+}
+
+bool stepSignalSleepTime = false;
 void loop() {
   ArduinoOTA.handle();
   ui.tick();
   WiFiupd();
+  WriteEeprom();
   //delay(1000);
-  if (LEDNeedChanged){
-    if (ledIsON) SetLedBrightness(brightnessLedIsON);
-    else if (switchState & enableSleepTime){
-      if (checkTimespan(sleepTimespan)){
-        
+  
+  if (ledIsON){ //Если включен принудительно
+    SetLedBrightness(brightnessLedIsON);
+    return;
+  }
+  if ((switchState & enableSleepTime) && (checkTimespan(sleepTimespan))){ //Если включен режим отход ко сну и внутри интервала отхода ко сну
+    if ((switchState & enableSignalSleepTime) && (checkTimespan(sleepTime * 10000 + sleepTime + 5))){ //Если активен сигнал "Пора спать" и внутри интервала "Пора спать" (5мин)
+      delay(200); //Мигаем
+      if (stepSignalSleepTime){
+        SetLedBrightness(brightnessSignalSleepTime);
+        stepSignalSleepTime = false;
+      }
+      else{
+        SetLedBrightness(0);
+        stepSignalSleepTime = true;
       }
     }
-    else SetLedBrightness(0);
-    LEDNeedChanged = false;
+    else{
+      if (switchState & enableAttenuationSleepTime){ //Затухание
+        uint32_t countMinutes = totalMinutes(sleepTimespan);
+      }
+      else
+        SetLedBrightness(brightnessLedIsON);
+    }
+    return;
   }
+  if ((switchState & enableSunriseTime) && (checkTimespan(sunriseTimespan))){ //Если включен рассвет и мы внутри его интервала
+
+    return;
+  }
+  SetLedBrightness(0);
 }
