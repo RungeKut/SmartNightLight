@@ -39,13 +39,22 @@ uint32_t signalSleepTimespan;
 class Parabola{
   public:
     float x1, y1, x2, y2, x3, y3, a, b, c;
-    void init(byte length, byte brightness){
+    void initDimSleep(byte length, byte brightness){
       x1 = 5;
       y1 = brightness;
       x2 = length / 2;
       y2 = brightness / 4;
       x3 = length;
       y3 = 4;
+      calc();
+    }
+    void initDimSunrise(byte length, byte brightness){
+      x1 = 0;
+      y1 = 4;
+      x2 = length / 2;
+      y2 = brightness / 3;
+      x3 = length;
+      y3 = brightness;
       calc();
     }
     void calc(){
@@ -64,6 +73,7 @@ uint32_t sunriseTimespan;
 byte lengthSunriseTime = 60;
 byte lengthSunTime = 30;
 byte maxBrightnessSunTime = 255;
+Parabola dimSunrise;
 
 //Конструктор страницы
 void build() {
@@ -94,7 +104,7 @@ void build() {
   GP.SLIDER("brightnessSignalSleepTime", brightnessSignalSleepTime, 0, 255); GP.BREAK();
   GP.HR(); //Затухание при засыпании линейно от начала до конца периода
   GP.LABEL("Затухание при засыпании"); GP.SWITCH("enableAttenuationSleepTime", switchState & enableAttenuationSleepTime); GP.BREAK();
-  dimSleep.init(lengthSleepTime, brightnessSignalSleepTime);
+  dimSleep.initDimSleep(lengthSleepTime, brightnessSignalSleepTime);
   GP.HR(); //Имитация рассвета
   GP.LABEL("Имитация рассвета"); GP.SWITCH("enableSunriseTime", switchState & enableSunriseTime); GP.BREAK();
   EEPROM.get(6, sunriseTime);
@@ -109,7 +119,7 @@ void build() {
   GP.LABEL("&#128262;Максимальная яркость рассвета"); GP.BREAK();
   EEPROM.get(10, maxBrightnessSunTime);
   GP.SLIDER("maxBrightnessSunTime", maxBrightnessSunTime, 0, 255); GP.BREAK();
-  
+  dimSunrise.initDimSunrise(lengthSunriseTime, maxBrightnessSunTime);
   GP.HR();
   GP.BUILD_END();
 }
@@ -251,7 +261,7 @@ void action() {
     }
     if (ui.clickInt("lengthSleepTime", lengthSleepTime)) {
       EEPROM.put(4, lengthSleepTime);
-      dimSleep.init(lengthSleepTime, brightnessSignalSleepTime);
+      dimSleep.initDimSleep(lengthSleepTime, brightnessSignalSleepTime);
       eepromNeedChanged = true;
       eepromTimespan = createDelayTimespan(valTime.hour * 100 + valTime.minute, 360);
     }
@@ -263,7 +273,7 @@ void action() {
     }
     if (ui.clickInt("brightnessSignalSleepTime", brightnessSignalSleepTime)) {
       EEPROM.put(5, brightnessSignalSleepTime);
-      dimSleep.init(lengthSleepTime, brightnessSignalSleepTime);
+      dimSleep.initDimSleep(lengthSleepTime, brightnessSignalSleepTime);
       eepromNeedChanged = true;
       eepromTimespan = createDelayTimespan(valTime.hour * 100 + valTime.minute, 360);
     }
@@ -287,6 +297,7 @@ void action() {
     }
     if (ui.clickInt("lengthSunriseTime", lengthSunriseTime)) {
       EEPROM.put(8, lengthSunriseTime);
+      dimSunrise.initDimSunrise(lengthSunriseTime, maxBrightnessSunTime);
       eepromNeedChanged = true;
       eepromTimespan = createDelayTimespan(valTime.hour * 100 + valTime.minute, 360);
     }
@@ -298,6 +309,7 @@ void action() {
     sunriseTimespan = createTimespan(sunriseTime, lengthSunriseTime + lengthSunTime);
     if (ui.clickInt("maxBrightnessSunTime", maxBrightnessSunTime)) {
       EEPROM.put(10, maxBrightnessSunTime);
+      dimSunrise.initDimSunrise(lengthSunriseTime, maxBrightnessSunTime);
       eepromNeedChanged = true;
       eepromTimespan = createDelayTimespan(valTime.hour * 100 + valTime.minute, 360);
     }
@@ -406,7 +418,7 @@ void loop() {
     }
     else{
       if (switchState & enableAttenuationSleepTime){ //Затухание
-        uint32_t countMinutes = totalMinutes((valTime.hour * 100 + valTime.minute) * 10000 + sleepTimespan % 10000);
+        uint32_t countMinutes = totalMinutes((sleepTimespan / 10000) * 10000 + (valTime.hour * 100 + valTime.minute));
         SetLedBrightness((int)dimSleep.y(countMinutes));
       }
       else
@@ -415,7 +427,8 @@ void loop() {
     return;
   }
   if ((switchState & enableSunriseTime) && (checkTimespan(sunriseTimespan))){ //Если включен рассвет и мы внутри его интервала
-
+    uint32_t countMinutes = totalMinutes((sunriseTimespan / 10000) * 10000 + (valTime.hour * 100 + valTime.minute));
+    SetLedBrightness((int)dimSunrise.y(countMinutes));
   }
   SetLedBrightness(0);
 }
