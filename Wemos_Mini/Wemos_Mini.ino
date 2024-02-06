@@ -40,19 +40,19 @@ class Parabola{
   public:
     float x1, y1, x2, y2, x3, y3, a, b, c;
     void initDimSleep(byte length, byte brightness){
-      x1 = 5;
-      y1 = brightness;
-      x2 = length / 2;
-      y2 = brightness / 4;
       x3 = length;
       y3 = 4;
+      x2 = length / 2;
+      y2 = brightness / 4 + y3;
+      x1 = 5;
+      y1 = brightness;
       calc();
     }
     void initDimSunrise(byte length, byte brightness){
       x1 = 0;
       y1 = 4;
       x2 = length / 2;
-      y2 = brightness / 3;
+      y2 = brightness / 3 + y1;
       x3 = length;
       y3 = brightness;
       calc();
