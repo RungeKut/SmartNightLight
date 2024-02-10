@@ -39,25 +39,24 @@ uint32_t signalSleepTimespan;
 class Parabola{
   public:
     float x1, y1, x2, y2, x3, y3, a, b, c;
+    byte minBrightness = 3;
     void initDimSleep(byte length, byte brightness){
-      x3 = length;
-      y3 = 4;
-      x2 = length / 2;
-      y2 = brightness / 4 + y3;
-      x1 = 5;
-      y1 = brightness;
-      calc();
+      if (brightness < minBrightness){
+        brightness = minBrightness;
+      }
+      a=(brightness-minBrightness)/(length*length);
+      b=-2*a*length;
+      c=brightness;
     }
     void initDimSunrise(byte length, byte brightness){
-      x1 = 0;
-      y1 = 4;
-      x2 = length / 2;
-      y2 = brightness / 3 + y1;
-      x3 = length;
-      y3 = brightness;
-      calc();
+      if (brightness < minBrightness){
+        brightness = minBrightness;
+      }
+      b=(brightness-minBrightness)/(length-(length*length/2));
+      a=-b/2;
+      c=minBrightness;
     }
-    void calc(){
+    void FunForPoint(float x1, float y1, float x2, float y2, float x3, float y3){
       a=(y3-(x3*(y2-y1)+x2*y1-x1*y2)/(x2-x1))/(x3*(x3-x1-x2)+x1*x2);
       b=(y2-y1)/(x2-x1)-a*(x1+x2);
       c=(x2*y1-x1*y2)/(x2-x1)+a*x1*x2;
@@ -429,6 +428,7 @@ void loop() {
   if ((switchState & enableSunriseTime) && (checkTimespan(sunriseTimespan))){ //Если включен рассвет и мы внутри его интервала
     uint32_t countMinutes = totalMinutes((sunriseTimespan / 10000) * 10000 + (valTime.hour * 100 + valTime.minute));
     SetLedBrightness((int)dimSunrise.y(countMinutes));
+    return;
   }
   SetLedBrightness(0);
 }
