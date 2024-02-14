@@ -38,22 +38,21 @@ uint32_t signalSleepTimespan;
 //Затухание при засыпании
 class Parabola{
   public:
-    float x1, y1, x2, y2, x3, y3, a, b, c;
-    byte minBrightness = 3;
-    void initDimSleep(byte length, byte brightness){
+    float x1, y1, x2, y2, x3, y3, a, b, c, minBrightness = 3.0;
+    void initDimSleep(float length, float brightness){
       if (brightness < minBrightness){
         brightness = minBrightness;
       }
       a=(brightness-minBrightness)/(length*length);
-      b=-2*a*length;
+      b=-2.0*a*length;
       c=brightness;
     }
-    void initDimSunrise(byte length, byte brightness){
+    void initDimSunrise(float length, float brightness){
       if (brightness < minBrightness){
         brightness = minBrightness;
       }
-      b=(brightness-minBrightness)/(length-(length*length/2));
-      a=-b/2;
+      b=(brightness-minBrightness)/(length-((length*length)/2.0));
+      a=-b/2.0;
       c=minBrightness;
     }
     void FunForPoint(float x1, float y1, float x2, float y2, float x3, float y3){
