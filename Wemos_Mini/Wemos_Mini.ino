@@ -38,22 +38,21 @@ uint32_t signalSleepTimespan;
 //Затухание при засыпании
 class Parabola{
   public:
-    float x1, y1, x2, y2, x3, y3, a, b, c;
-    float minBrightness = 3;
+    float x1, y1, x2, y2, x3, y3, a, b, c, minBrightness = 3.0;
     void initDimSleep(float length, float brightness){
       if (brightness < minBrightness){
         brightness = minBrightness;
       }
       a=(brightness-minBrightness)/(length*length);
-      b=-2*a*length;
+      b=-2.0*a*length;
       c=brightness;
     }
     void initDimSunrise(float length, float brightness){
       if (brightness < minBrightness){
         brightness = minBrightness;
       }
-      b=(brightness-minBrightness)/(length-(length*length/2));
-      a=-b/2;
+      b=(brightness-minBrightness)/(length-((length*length)/2.0));
+      a=-b/2.0;
       c=minBrightness;
     }
     void FunForPoint(float x1, float y1, float x2, float y2, float x3, float y3){
@@ -76,7 +75,6 @@ Parabola dimSunrise;
 
 //Конструктор страницы
 void build() {
-  uint16_t tempTime;
   GP.BUILD_BEGIN(GP_DARK);
   GP.PAGE_TITLE("Умный Филин Ночник", "SmartNightLight");
   GP.TITLE("SmartNightLight или Умный Филин Ночник", "t1");
@@ -85,40 +83,27 @@ void build() {
   GP.TIME("time", valTime); GP.BREAK();
   GP.LABEL("Включить "); GP.SWITCH("ledIsON", ledIsON); GP.BREAK();
   GP.LABEL("&#128262;Яркость"); GP.BREAK();
-  EEPROM.get(1, brightnessLedIsON);
   GP.SLIDER("brightnessLedIsON", brightnessLedIsON, 0, 255);
   GP.HR(); //Время отхода ко сну
   GP.LABEL("Время отхода ко сну"); GP.SWITCH("enableSleepTime", switchState & enableSleepTime); GP.BREAK();
-  EEPROM.get(2, sleepTime);
   GP.TIME("sleepTime", GPtime(sleepTime / 100, sleepTime % 100, 0));
   GP.LABEL("Продолжительность отхода ко сну, мин.");
-  EEPROM.get(4, lengthSleepTime);
   GP.SLIDER("lengthSleepTime", lengthSleepTime, 0, 255); GP.BREAK();
-  sleepTimespan = createTimespan(sleepTime, lengthSleepTime);
-  signalSleepTimespan = createTimespan(sleepTime, 5);
   GP.HR();//Сигнал "Пора спать"
   GP.LABEL("Сигнал \"Пора спать\""); GP.SWITCH("enableSignalSleepTime", switchState & enableSignalSleepTime); GP.BREAK();//Сигнал "Пора спать" за 5 минут до отхода ко сну
   GP.LABEL("&#128262;Яркость сигнала \"Пора спать\""); GP.BREAK();
-  EEPROM.get(5, brightnessSignalSleepTime);
   GP.SLIDER("brightnessSignalSleepTime", brightnessSignalSleepTime, 0, 255); GP.BREAK();
   GP.HR(); //Затухание при засыпании линейно от начала до конца периода
   GP.LABEL("Затухание при засыпании"); GP.SWITCH("enableAttenuationSleepTime", switchState & enableAttenuationSleepTime); GP.BREAK();
-  dimSleep.initDimSleep(lengthSleepTime, brightnessSignalSleepTime);
   GP.HR(); //Имитация рассвета
   GP.LABEL("Имитация рассвета"); GP.SWITCH("enableSunriseTime", switchState & enableSunriseTime); GP.BREAK();
-  EEPROM.get(6, sunriseTime);
   GP.TIME("sunriseTime", GPtime(sunriseTime / 100, sunriseTime % 100, 0));
   GP.LABEL("Продолжительность рассвета, мин."); //Нарастание яркости линейно от начала до конца периода до максимальной
-  EEPROM.get(8, lengthSunriseTime);
   GP.SLIDER("lengthSunriseTime", lengthSunriseTime, 0, 255); GP.BREAK();
   GP.LABEL("Продолжительность после рассвета, мин."); //Сколько еще гореть на максимальной яркости
-  EEPROM.get(9, lengthSunTime);
   GP.SLIDER("lengthSunTime", lengthSunTime, 0, 255); GP.BREAK();
-  sunriseTimespan = createTimespan(sunriseTime, lengthSunriseTime + lengthSunTime);
   GP.LABEL("&#128262;Максимальная яркость рассвета"); GP.BREAK();
-  EEPROM.get(10, maxBrightnessSunTime);
   GP.SLIDER("maxBrightnessSunTime", maxBrightnessSunTime, 0, 255); GP.BREAK();
-  dimSunrise.initDimSunrise(lengthSunriseTime, maxBrightnessSunTime);
   GP.HR();
   GP.BUILD_END();
 }
@@ -153,6 +138,22 @@ void WriteEeprom(){
       eepromNeedChanged = false;
     }
   }
+}
+
+void ReadEeprom(){
+  EEPROM.get(1, brightnessLedIsON);
+  EEPROM.get(2, sleepTime);
+  EEPROM.get(4, lengthSleepTime);
+  sleepTimespan = createTimespan(sleepTime, lengthSleepTime);
+  signalSleepTimespan = createTimespan(sleepTime, 5);
+  EEPROM.get(5, brightnessSignalSleepTime);
+  dimSleep.initDimSleep(lengthSleepTime, brightnessSignalSleepTime);
+  EEPROM.get(6, sunriseTime);
+  EEPROM.get(8, lengthSunriseTime);
+  EEPROM.get(9, lengthSunTime);
+  sunriseTimespan = createTimespan(sunriseTime, lengthSunriseTime + lengthSunTime);
+  EEPROM.get(10, maxBrightnessSunTime);
+  dimSunrise.initDimSunrise(lengthSunriseTime, maxBrightnessSunTime);
 }
 
 void setup() {
@@ -225,6 +226,7 @@ void setup() {
   ui.attachBuild(build);
   ui.attach(action);
   ui.start();
+  ReadEeprom();
 }
 
 void action() {
