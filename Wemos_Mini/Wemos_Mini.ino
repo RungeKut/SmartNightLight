@@ -39,8 +39,8 @@ uint32_t signalSleepTimespan;
 class Parabola{
   public:
     float x1, y1, x2, y2, x3, y3, a, b, c;
-    byte minBrightness = 3;
-    void initDimSleep(byte length, byte brightness){
+    float minBrightness = 3;
+    void initDimSleep(float length, float brightness){
       if (brightness < minBrightness){
         brightness = minBrightness;
       }
@@ -48,7 +48,7 @@ class Parabola{
       b=-2*a*length;
       c=brightness;
     }
-    void initDimSunrise(byte length, byte brightness){
+    void initDimSunrise(float length, float brightness){
       if (brightness < minBrightness){
         brightness = minBrightness;
       }
