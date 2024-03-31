@@ -159,6 +159,7 @@ void ReadEeprom(){
 void setup() {
   analogWriteFreq(1000); //(100.. 40000 Гц)
   analogWriteResolution(8); //(4...16 бит)
+  SetLedBrightness(255);
   timeClient.begin(); //Запускаем клиент времени
   timeClient.setTimeOffset(10800); //Указываем смещение по времени от Гринвича. Москва GMT+3 => 60*60*3 = 10800
   Serial.begin(115200);
@@ -403,9 +404,8 @@ void loop() {
   
   if (ledIsON){ //Если включен принудительно
     SetLedBrightness(brightnessLedIsON);
-    return;
   }
-  if ((switchState & enableSleepTime) && (checkTimespan(sleepTimespan))){ //Если включен режим отход ко сну и внутри интервала отхода ко сну
+  else if ((switchState & enableSleepTime) && (checkTimespan(sleepTimespan))){ //Если включен режим отход ко сну и внутри интервала отхода ко сну
     if ((switchState & enableSignalSleepTime) && (checkTimespan(signalSleepTimespan))){ //Если активен сигнал "Пора спать" и внутри интервала "Пора спать" (5мин)
       delay(200); //Мигаем
       if (stepSignalSleepTime){
@@ -425,12 +425,12 @@ void loop() {
       else
         SetLedBrightness(brightnessLedIsON);
     }
-    return;
   }
-  if ((switchState & enableSunriseTime) && (checkTimespan(sunriseTimespan))){ //Если включен рассвет и мы внутри его интервала
+  else if ((switchState & enableSunriseTime) && (checkTimespan(sunriseTimespan))){ //Если включен рассвет и мы внутри его интервала
     uint32_t countMinutes = totalMinutes((sunriseTimespan / 10000) * 10000 + (valTime.hour * 100 + valTime.minute));
     SetLedBrightness((int)dimSunrise.y(countMinutes));
-    return;
   }
-  SetLedBrightness(0);
+  else{
+    SetLedBrightness(0);
+  }
 }
