@@ -323,10 +323,6 @@ void WiFiupd(){
     {
       // update the NTP client and get the UNIX UTC timestamp 
       timeClient.update();
-      valTime = GPtime(timeClient.getHours(), timeClient.getMinutes(), timeClient.getSeconds());
-      epochTime = timeClient.getEpochTime();
-      ptm = gmtime((time_t *)&epochTime);
-      valDate = GPdate(ptm -> tm_year + 1900, ptm -> tm_mon + 1, ptm -> tm_mday);
     }
     else //Пробуем подключиться заново
     {
@@ -339,6 +335,10 @@ void WiFiupd(){
         ESP.restart();
       }
     }
+    valTime = GPtime(timeClient.getHours(), timeClient.getMinutes(), timeClient.getSeconds());
+    epochTime = timeClient.getEpochTime();
+    ptm = gmtime((time_t *)&epochTime);
+    valDate = GPdate(ptm -> tm_year + 1900, ptm -> tm_mon + 1, ptm -> tm_mday);
 }
 
 uint32_t createTimespan(uint16_t startTime, uint16_t lengthTime){
