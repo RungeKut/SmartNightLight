@@ -146,10 +146,15 @@ private:
       // Ради этого сенсора всё и затевалось: график ночной активности.
       { "sensor", "sound_level", "Уровень шума", "sound.level",
         nullptr, "measurement", nullptr, nullptr, nullptr, nullptr },
+      // Пик и счётчик срабатываний НЕ diagnostic: категория diagnostic
+      // прячет сущность в отдельный раздел карточки, а это ровно те две
+      // величины, ради которых всё затевалось — ночная активность на
+      // графике. Уровень измеряется круглосуточно и публикуется всегда,
+      // независимо от ночного окна и от того, включён ли режим.
       { "sensor", "sound_peak", "Пик шума за минуту", "sound.peak",
-        nullptr, "measurement", nullptr, "diagnostic", nullptr, nullptr },
+        nullptr, "measurement", nullptr, nullptr, nullptr, nullptr },
       { "sensor", "sound_triggers", "Срабатываний по шуму", "sound.triggers",
-        nullptr, "total_increasing", nullptr, "diagnostic", nullptr, nullptr },
+        nullptr, "total_increasing", nullptr, nullptr, nullptr, nullptr },
       // device_class sound: в HA такая сущность читается как
       // "обнаружен звук" и годится в триггер автоматизации
       { "binary_sensor", "sound_active", "Отклик на шум", "sound.active",
