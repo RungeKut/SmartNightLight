@@ -163,6 +163,14 @@ private:
       { "switch", "mode_sound", "Реакция на шум", "modes.sound",
         nullptr, nullptr, nullptr, "config", "mode_sound", nullptr },
 
+      // Яркость ручного режима отдельной сущностью, а не только
+      // ползунком лампы: у выключенной лампы HA отдаёт brightness=None,
+      // то есть заданное значение не видно и задать его заранее нельзя.
+      // Через number его видно всегда и можно выставить, не зажигая свет.
+      { "number", "manual_brightness", "Яркость ручного режима", "cfg.manual_brightness",
+        nullptr, nullptr, nullptr, "config", "manual_brightness",
+        "\"min\":0,\"max\":255,\"step\":1,\"mode\":\"slider\"" },
+
       { "number", "sound_threshold", "Порог шума", "cfg.sound_threshold",
         nullptr, nullptr, nullptr, "config", "sound_threshold",
         "\"min\":0,\"max\":1023,\"step\":1,\"mode\":\"box\"" },
@@ -404,6 +412,7 @@ public:
       m["sound"] = p.soundEnabled ? "ON" : "OFF";
 
       JsonObject c = doc["cfg"].to<JsonObject>();
+      c["manual_brightness"] = p.manualBrightness;
       c["sound_threshold"] = _config->data.soundThreshold;
       c["sound_brightness"] = _config->data.soundBrightness;
 

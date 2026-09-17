@@ -583,6 +583,14 @@ void onMqttCommand(const String &cmd, const String &value) {
   else if (cmd == "mode_sleep")   setFlag(nl::FLAG_SLEEP, value == "ON");
   else if (cmd == "mode_sunrise") setFlag(nl::FLAG_SUNRISE, value == "ON");
   else if (cmd == "mode_sound")   setFlag(nl::FLAG_SOUND, value == "ON");
+  else if (cmd == "manual_brightness") {
+    config.data.manualBrightness = (uint8_t)constrain(value.toInt(), 0, 255);
+    markConfigDirty();
+    // Если светильник сейчас горит вручную, новая яркость должна лечь
+    // сразу, а не после следующего включения
+    applyNightLight();
+    mqtt.publishState(buildMqttPayload());
+  }
   else if (cmd == "sound_threshold") {
     config.data.soundThreshold = (uint16_t)constrain(value.toInt(), 0, 1023);
     markConfigDirty();
