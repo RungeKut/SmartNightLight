@@ -58,6 +58,26 @@ struct ConfigData {
   int16_t  tzOffsetMinutes;
 
   uint8_t  _reserved[16];      // место под новые поля без сдвига старых
+
+  // ====== Добавлено В КОНЕЦ: разгорание от шума ======
+  // Смещения полей выше не изменились, поэтому настройки, записанные
+  // прежней прошивкой, читаются как есть. В этих байтах у них лежит
+  // 0xFF из стёртой flash — распознаётся по soundStart, см. sanitize().
+  uint16_t soundStart;         // hhmm, начало ночного окна
+  uint16_t soundEnd;           // hhmm, конец окна
+  uint16_t soundThreshold;     // порог размаха в отсчётах АЦП
+  uint8_t  soundBrightness;
+  uint16_t soundFadeInSec;
+  uint16_t soundHoldSec;
+  uint16_t soundFadeOutSec;
+
+  // ====== Добавлено В КОНЕЦ: MQTT для Home Assistant ======
+  bool     mqttEnabled;
+  char     mqttHost[48];
+  uint16_t mqttPort;
+  char     mqttUser[32];
+  char     mqttPass[32];
+  uint16_t mqttIntervalSec;    // период публикации, 0 = по умолчанию
 };
 
 class ConfigStore {
@@ -106,6 +126,27 @@ public:
     data.sunLength = 30;
     data.sunriseBrightness = 255;
     data.tzOffsetMinutes = 180;     // GMT+3, Москва
+    setSoundDefaults();
+    setMqttDefaults();
+  }
+
+  void setSoundDefaults() {
+    data.soundStart = 2300;         // 23:00
+    data.soundEnd = 600;            // 06:00
+    data.soundThreshold = 60;       // подбирается по уровню в интерфейсе
+    data.soundBrightness = 40;      // дойти до туалета, а не проснуться
+    data.soundFadeInSec = 3;
+    data.soundHoldSec = 120;
+    data.soundFadeOutSec = 20;
+  }
+
+  void setMqttDefaults() {
+    data.mqttEnabled = false;
+    data.mqttHost[0] = '\0';
+    data.mqttPort = 1883;
+    data.mqttUser[0] = '\0';
+    data.mqttPass[0] = '\0';
+    data.mqttIntervalSec = 0;
   }
 
   // Выдаёт настройки в том виде, в каком их ждёт логика светильника
@@ -120,6 +161,12 @@ public:
     s.sunriseLength = data.sunriseLength;
     s.sunLength = data.sunLength;
     s.sunriseBrightness = data.sunriseBrightness;
+    s.soundStart = data.soundStart;
+    s.soundEnd = data.soundEnd;
+    s.soundBrightness = data.soundBrightness;
+    s.soundFadeInSec = data.soundFadeInSec;
+    s.soundHoldSec = data.soundHoldSec;
+    s.soundFadeOutSec = data.soundFadeOutSec;
     return s;
   }
 
@@ -139,6 +186,31 @@ private:
     // Настоящие смещения лежат в пределах суток.
     if (data.tzOffsetMinutes < -720 || data.tzOffsetMinutes > 840) {
       data.tzOffsetMinutes = 180;
+    }
+
+    // Блок звука проверяем целиком по одному якорю. Значение яркости
+    // само по себе якорем быть не может: 0xFF — это 255, вполне
+    // допустимая яркость, и отличить её от нетронутой flash нельзя.
+    // А вот 0xFFFF в поле времени валидным hhmm не бывает.
+    if (!isValidHhmm(data.soundStart) || !isValidHhmm(data.soundEnd)) {
+      Log.println(F("[Config] Блок звука не инициализирован, беру умолчания"));
+      setSoundDefaults();
+    } else {
+      if (data.soundThreshold > 1023) data.soundThreshold = 60;
+      if (data.soundFadeInSec > 3600) data.soundFadeInSec = 3;
+      if (data.soundHoldSec > 3600) data.soundHoldSec = 120;
+      if (data.soundFadeOutSec > 3600) data.soundFadeOutSec = 20;
+    }
+
+    // Тот же приём для MQTT: порт 0xFFFF выдаёт неинициализированный блок
+    if (data.mqttPort == 0xFFFF || data.mqttPort == 0) {
+      Log.println(F("[Config] Блок MQTT не инициализирован, беру умолчания"));
+      setMqttDefaults();
+    } else {
+      terminate(data.mqttHost, sizeof(data.mqttHost));
+      terminate(data.mqttUser, sizeof(data.mqttUser));
+      terminate(data.mqttPass, sizeof(data.mqttPass));
+      if (data.mqttIntervalSec > 3600) data.mqttIntervalSec = 0;
     }
   }
 

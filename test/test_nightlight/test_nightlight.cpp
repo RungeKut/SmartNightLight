@@ -21,7 +21,27 @@ static Settings defaults() {
   s.sunriseLength = 60;
   s.sunLength = 30;
   s.sunriseBrightness = 255;
+  s.soundStart = 2300;
+  s.soundEnd = 600;
+  s.soundBrightness = 40;
+  s.soundFadeInSec = 3;
+  s.soundHoldSec = 120;
+  s.soundFadeOutSec = 20;
   return s;
+}
+
+static SoundEvent heard(uint32_t secAgo) {
+  SoundEvent e;
+  e.active = true;
+  e.secSince = secAgo;
+  return e;
+}
+
+static SoundEvent silence() {
+  SoundEvent e;
+  e.active = false;
+  e.secSince = 0;
+  return e;
 }
 
 // ==================== Арифметика времени ====================
@@ -210,6 +230,126 @@ void test_brightness_below_minimum_is_raised() {
   TEST_ASSERT_EQUAL_UINT8((uint8_t)MIN_BRIGHTNESS, r.brightness);
 }
 
+// ==================== Ночное окно ====================
+
+void test_window_within_day() {
+  TEST_ASSERT_TRUE(insideWindow(1000, 1200, 1100));
+  TEST_ASSERT_FALSE(insideWindow(1000, 1200, 1300));
+  TEST_ASSERT_FALSE(insideWindow(1000, 1200, 959));
+}
+
+// Ночное окно почти всегда переходит через полночь — это основной
+// случай, а не краевой
+void test_window_over_midnight() {
+  TEST_ASSERT_TRUE(insideWindow(2300, 600, 2330));
+  TEST_ASSERT_TRUE(insideWindow(2300, 600, 300));
+  TEST_ASSERT_TRUE(insideWindow(2300, 600, 600));
+  TEST_ASSERT_FALSE(insideWindow(2300, 600, 601));
+  TEST_ASSERT_FALSE(insideWindow(2300, 600, 2259));
+  TEST_ASSERT_FALSE(insideWindow(2300, 600, 1200));
+}
+
+// Совпадающие концы означают "окно не задано", а не круглые сутки
+void test_window_equal_bounds_is_never_inside() {
+  TEST_ASSERT_FALSE(insideWindow(2300, 2300, 2300));
+  TEST_ASSERT_FALSE(insideWindow(2300, 2300, 1200));
+}
+
+// ==================== Отклик на шум ====================
+
+void test_sound_ramps_holds_and_fades() {
+  Settings s = defaults();
+  s.flags = FLAG_SOUND;
+
+  // Разгорание: в начале темно, к концу — заданная яркость
+  TEST_ASSERT_EQUAL_UINT8(0, compute(s, 200, false, true, heard(0)).brightness);
+  Result mid = compute(s, 200, false, true, heard(2));
+  TEST_ASSERT_EQUAL(MODE_SOUND, mid.mode);
+  TEST_ASSERT_TRUE(mid.brightness > 0 && mid.brightness < 40);
+
+  // Удержание
+  TEST_ASSERT_EQUAL_UINT8(40, compute(s, 200, false, true, heard(3)).brightness);
+  TEST_ASSERT_EQUAL_UINT8(40, compute(s, 200, false, true, heard(60)).brightness);
+  TEST_ASSERT_EQUAL_UINT8(40, compute(s, 200, false, true, heard(122)).brightness);
+
+  // Затухание
+  Result fading = compute(s, 200, false, true, heard(133));
+  TEST_ASSERT_EQUAL(MODE_SOUND, fading.mode);
+  TEST_ASSERT_TRUE(fading.brightness > 0 && fading.brightness < 40);
+
+  // Конец отклика: гаснет полностью, а не тлеет как затухание сна
+  Result done = compute(s, 200, false, true, heard(143));
+  TEST_ASSERT_EQUAL(MODE_OFF, done.mode);
+  TEST_ASSERT_EQUAL_UINT8(0, done.brightness);
+}
+
+void test_sound_ignored_outside_window() {
+  Settings s = defaults();
+  s.flags = FLAG_SOUND;
+  // Полдень — окно 23:00-06:00 не действует
+  TEST_ASSERT_EQUAL(MODE_OFF, compute(s, 1200, false, true, heard(10)).mode);
+}
+
+void test_sound_ignored_when_flag_off() {
+  Settings s = defaults();
+  s.flags = 0;
+  TEST_ASSERT_EQUAL(MODE_OFF, compute(s, 200, false, true, heard(10)).mode);
+}
+
+void test_sound_ignored_without_event() {
+  Settings s = defaults();
+  s.flags = FLAG_SOUND;
+  TEST_ASSERT_EQUAL(MODE_OFF, compute(s, 200, false, true, silence()).mode);
+}
+
+// Ребёнок, ворочающийся под затухание, не должен получать вспышку:
+// шум проверяется последним и не вмешивается в засыпание
+void test_sleep_wins_over_sound() {
+  Settings s = defaults();
+  s.flags = FLAG_SLEEP | FLAG_DIM | FLAG_SOUND;
+  s.sleepTime = 2330;
+  s.sleepLength = 60;
+  Result r = compute(s, 2350, false, true, heard(5));
+  TEST_ASSERT_EQUAL(MODE_DIM, r.mode);
+}
+
+void test_sunrise_wins_over_sound() {
+  Settings s = defaults();
+  s.flags = FLAG_SUNRISE | FLAG_SOUND;
+  s.sunriseTime = 530;
+  s.sunriseLength = 30;
+  s.sunLength = 10;
+  Result r = compute(s, 545, false, true, heard(5));
+  TEST_ASSERT_EQUAL(MODE_SUNRISE, r.mode);
+}
+
+void test_manual_wins_over_sound() {
+  Settings s = defaults();
+  s.flags = FLAG_SOUND;
+  Result r = compute(s, 200, true, true, heard(5));
+  TEST_ASSERT_EQUAL(MODE_MANUAL, r.mode);
+}
+
+// Мгновенное включение без разгорания не должно давать деление на ноль
+void test_sound_zero_fade_in_is_instant() {
+  Settings s = defaults();
+  s.flags = FLAG_SOUND;
+  s.soundFadeInSec = 0;
+  Result r = compute(s, 200, false, true, heard(0));
+  TEST_ASSERT_EQUAL(MODE_SOUND, r.mode);
+  TEST_ASSERT_EQUAL_UINT8(40, r.brightness);
+}
+
+// Все длительности нулевые — отклика нет, а не бесконечный свет
+void test_sound_all_zero_durations_stays_off() {
+  Settings s = defaults();
+  s.flags = FLAG_SOUND;
+  s.soundFadeInSec = 0;
+  s.soundHoldSec = 0;
+  s.soundFadeOutSec = 0;
+  TEST_ASSERT_EQUAL(MODE_OFF, compute(s, 200, false, true, heard(0)).mode);
+}
+
 // Unity требует эти две функции даже пустыми: они вызываются вокруг
 // каждого теста, а общего состояния здесь нет.
 void setUp(void) {}
@@ -234,5 +374,17 @@ int main(int, char **) {
   RUN_TEST(test_two_minute_sunrise_is_finite);
   RUN_TEST(test_zero_length_intervals_do_not_divide_by_zero);
   RUN_TEST(test_brightness_below_minimum_is_raised);
+  RUN_TEST(test_window_within_day);
+  RUN_TEST(test_window_over_midnight);
+  RUN_TEST(test_window_equal_bounds_is_never_inside);
+  RUN_TEST(test_sound_ramps_holds_and_fades);
+  RUN_TEST(test_sound_ignored_outside_window);
+  RUN_TEST(test_sound_ignored_when_flag_off);
+  RUN_TEST(test_sound_ignored_without_event);
+  RUN_TEST(test_sleep_wins_over_sound);
+  RUN_TEST(test_sunrise_wins_over_sound);
+  RUN_TEST(test_manual_wins_over_sound);
+  RUN_TEST(test_sound_zero_fade_in_is_instant);
+  RUN_TEST(test_sound_all_zero_durations_stays_off);
   return UNITY_END();
 }

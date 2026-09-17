@@ -21,6 +21,9 @@
 #include "NightLight.h"
 #include "ConfigStore.h"
 #include "WsRxBuffer.h"
+#include "SoundSensor.h"
+#include "MqttClient.h"
+#include "FailsafeOTA.h"
 
 // ==================== Железо ====================
 // GPIO0 (D3). Пин участвует в выборе режима загрузки, поэтому в
@@ -49,6 +52,9 @@ ConfigStore config;
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 WsRxBuffer wsRx;
+SoundSensor sound;
+MqttClient mqtt;
+FailsafeOTA failsafe;
 
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 0, 60000);
@@ -73,6 +79,11 @@ uint8_t nowMonth = 1, nowDay = 1, nowSecond = 0;
 // Ручное включение — состояние на сеанс, в EEPROM не сохраняется:
 // после перезагрузки светильник должен вернуться к расписанию.
 bool manualOn = false;
+
+// Отклик на шум. Момент последнего превышения порога хранится здесь,
+// а не в NightLight.h: логика не должна знать про millis().
+uint32_t soundTriggerMs = 0;
+bool soundActive = false;
 
 uint8_t currentBrightness = 0;
 nl::Mode currentMode = nl::MODE_OFF;
@@ -109,6 +120,11 @@ void fillSystemState(JsonDocument &doc);
 bool connectToWiFi();
 void startAPMode();
 void WiFiupd();
+void updateSound(uint32_t now);
+void applyNightLight();
+void markConfigDirty();
+void onMqttCommand(const String &cmd, const String &value);
+MqttClient::Payload buildMqttPayload();
 
 // ==================== Светодиод ====================
 void setBrightness(uint8_t value) {
@@ -167,12 +183,42 @@ void updateLocalTime() {
   nowDay = (uint8_t)ptm->tm_mday;
 }
 
+// ==================== Микрофон ====================
+// Детектор работает всё ночное окно, даже когда светильник занят
+// другим режимом: срабатывания нужны для графика ночной активности,
+// а зажигать свет или нет — решает уже nl::compute().
+void updateSound(uint32_t now) {
+  if (!sound.tick(now)) return;
+
+  nl::Settings s = config.toSettings();
+  bool inWindow = timeValid
+               && nl::insideWindow(s.soundStart, s.soundEnd, nowHhmm);
+
+  if ((config.data.flags & nl::FLAG_SOUND) && inWindow
+      && sound.exceeded(config.data.soundThreshold)) {
+    // Новый шум во время отклика продлевает его с начала: ребёнок,
+    // который ходит по комнате, не должен остаться в темноте на
+    // середине затухания.
+    if (!soundActive) sound.countTrigger();   // считаем события, а не измерения
+    soundTriggerMs = now;
+    soundActive = true;
+  }
+
+  if (soundActive && (now - soundTriggerMs) / 1000 > nl::soundTotalSec(s)) {
+    soundActive = false;
+  }
+}
+
 // ==================== Логика светильника ====================
 void applyNightLight() {
   nl::Settings s = config.toSettings();
   bool blinkOn = ((millis() / BLINK_PERIOD_MS) % 2) == 0;
 
-  nl::Result r = nl::compute(s, nowHhmm, manualOn, blinkOn);
+  nl::SoundEvent ev;
+  ev.active = soundActive;
+  ev.secSince = soundActive ? (millis() - soundTriggerMs) / 1000 : 0;
+
+  nl::Result r = nl::compute(s, nowHhmm, manualOn, blinkOn, ev);
 
   // Без синхронизированного времени расписание работать не может:
   // gmtime(0) дал бы 00:00 01.01.1970, и интервалы срабатывали бы
@@ -222,6 +268,9 @@ void setup() {
   Log.printf("\n\n=== %s ===\n", deviceName);
   Log.printf("[Boot] Причина сброса: %s\n", ESP.getResetReason().c_str());
 
+  failsafe.begin();
+  sound.begin();
+
   timeClient.begin();
   timeClient.setTimeOffset(config.data.tzOffsetMinutes * 60);
 
@@ -246,7 +295,13 @@ void setup() {
     // яркость всё равно застыла бы на текущей до перезагрузки.
     setBrightness(0);
   });
-  ArduinoOTA.onEnd([]() { Log.println(F("[OTA] Готово, перезагрузка")); });
+  ArduinoOTA.onEnd([]() {
+    Log.println(F("[OTA] Готово, перезагрузка"));
+    // Флаг в RTC: новая прошивка при старте узнает, что её надо
+    // подтвердить. Только для образа прошивки — обновление
+    // файловой системы код не меняет и подтверждения не требует.
+    if (ArduinoOTA.getCommand() == U_FLASH) failsafe.updateFirmware();
+  });
   ArduinoOTA.onError([](ota_error_t error) {
     Log.printf("[OTA] Ошибка %u\n", error);
     // Файловую систему после неудачного обновления надо вернуть, иначе
@@ -293,6 +348,9 @@ void setup() {
     Log.printf("[mDNS] http://%s.local\n", deviceName);
   }
 
+  // Версия прошивки = дата сборки, её видно в карточке устройства HA
+  mqtt.begin(&config, deviceMac, deviceName, __DATE__, onMqttCommand);
+
   Log.println(F("[Boot] Готово"));
 }
 
@@ -309,9 +367,12 @@ void loop() {
   ws.cleanupClients(2);
   WiFiupd();
   updateLocalTime();
+  updateSound(now);
   applyNightLight();
   flushConfig();
   handleSnapshots(now);
+  failsafe.handle();
+  mqtt.handle(buildMqttPayload());
 
   if (now - lastTelemetry >= TELEMETRY_MS) {
     lastTelemetry = now;
@@ -437,11 +498,93 @@ void fillSystemState(JsonDocument &doc) {
   doc["brightness"] = currentBrightness;
   doc["mode"] = nl::modeName(currentMode);
 
+  // Уровень и пик нужны, чтобы подобрать порог: в интерфейсе видно,
+  // что даёт тишина, а что — шаги по комнате.
+  doc["sound_level"] = sound.level();
+  doc["sound_peak"] = sound.peak();
+  doc["sound_triggers"] = sound.triggers();
+  doc["sound_present"] = sound.present();
+  doc["sound_active"] = soundActive;
+
+  doc["mqtt_enabled"] = mqtt.isEnabled();
+  doc["mqtt_connected"] = mqtt.isConnected();
+  doc["mqtt_error"] = mqtt.lastErrorText();
+
+  doc["ota_pending"] = failsafe.isPending();
+  doc["ota_remaining"] = failsafe.remainingSec();
+
   doc["uptime"] = (millis() - bootMillis) / 1000;
   doc["heap"] = ESP.getFreeHeap();
   doc["ws_clients"] = ws.count();
   doc["ws_drops"] = wsRx.drops();
   doc["config_pending"] = configDirty;
+}
+
+// ==================== MQTT ====================
+MqttClient::Payload buildMqttPayload() {
+  MqttClient::Payload p;
+  p.brightness = currentBrightness;
+  p.mode = nl::modeName(currentMode);
+  p.manualOn = manualOn;
+  p.manualBrightness = config.data.manualBrightness;
+
+  p.soundLevel = sound.level();
+  p.soundPeak = sound.peak();
+  p.soundTriggers = sound.triggers();
+  p.soundActive = soundActive;
+
+  p.sleepEnabled = (config.data.flags & nl::FLAG_SLEEP) != 0;
+  p.sunriseEnabled = (config.data.flags & nl::FLAG_SUNRISE) != 0;
+  p.soundEnabled = (config.data.flags & nl::FLAG_SOUND) != 0;
+  p.timeValid = timeValid;
+
+  p.rssi = wifiConnected ? WiFi.RSSI() : 0;
+  p.uptimeSec = (millis() - bootMillis) / 1000;
+  p.freeHeap = ESP.getFreeHeap();
+  return p;
+}
+
+// Переключить бит режима и запомнить, что настройки надо сохранить
+static void setFlag(uint8_t bit, bool on) {
+  if (on) config.data.flags |= bit;
+  else config.data.flags &= ~bit;
+  markConfigDirty();
+}
+
+// Команды из Home Assistant. Приходят в контексте сетевого стека,
+// поэтому здесь только меняем состояние — работу делает loop().
+void onMqttCommand(const String &cmd, const String &value) {
+  if (cmd == "light") {
+    // JSON-схема HA: {"state":"ON","brightness":128}
+    JsonDocument doc;
+    if (deserializeJson(doc, value)) {
+      Log.println(F("[MQTT] Не разобрал команду лампы"));
+      return;
+    }
+    const char *state = doc["state"] | "";
+    if (doc["brightness"].is<int>()) {
+      int b = doc["brightness"].as<int>();
+      config.data.manualBrightness = (uint8_t)constrain(b, 0, 255);
+      markConfigDirty();
+    }
+    if (strcmp(state, "ON") == 0) manualOn = true;
+    else if (strcmp(state, "OFF") == 0) manualOn = false;
+    applyNightLight();
+    mqtt.publishState(buildMqttPayload());   // HA ждёт подтверждения сразу
+  }
+  else if (cmd == "mode_sleep")   setFlag(nl::FLAG_SLEEP, value == "ON");
+  else if (cmd == "mode_sunrise") setFlag(nl::FLAG_SUNRISE, value == "ON");
+  else if (cmd == "mode_sound")   setFlag(nl::FLAG_SOUND, value == "ON");
+  else if (cmd == "sound_threshold") {
+    config.data.soundThreshold = (uint16_t)constrain(value.toInt(), 0, 1023);
+    markConfigDirty();
+  }
+  else if (cmd == "sound_brightness") {
+    config.data.soundBrightness = (uint8_t)constrain(value.toInt(), 0, 255);
+    markConfigDirty();
+  }
+  else if (cmd == "restart") needsRestart = true;
+  else if (cmd == "confirm_ota") failsafe.confirm();
 }
 
 void sendSystemState(AsyncWebSocketClient *client) {
@@ -469,7 +612,22 @@ void sendConfigState(AsyncWebSocketClient *client) {
   cfg["sunriseBrightness"] = config.data.sunriseBrightness;
   cfg["tzOffsetMinutes"] = config.data.tzOffsetMinutes;
   cfg["signalMinutes"] = nl::SIGNAL_MINUTES;
-  // Пароль от WiFi клиенту намеренно не отдаём
+
+  cfg["soundStart"] = config.data.soundStart;
+  cfg["soundEnd"] = config.data.soundEnd;
+  cfg["soundThreshold"] = config.data.soundThreshold;
+  cfg["soundBrightness"] = config.data.soundBrightness;
+  cfg["soundFadeInSec"] = config.data.soundFadeInSec;
+  cfg["soundHoldSec"] = config.data.soundHoldSec;
+  cfg["soundFadeOutSec"] = config.data.soundFadeOutSec;
+
+  cfg["mqttEnabled"] = config.data.mqttEnabled;
+  cfg["mqttHost"] = config.data.mqttHost;
+  cfg["mqttPort"] = config.data.mqttPort;
+  cfg["mqttUser"] = config.data.mqttUser;
+  cfg["mqttIntervalSec"] = config.data.mqttIntervalSec;
+
+  // Пароли (wifiPass, mqttPass) клиенту намеренно не отдаём
   wsSendJson(client, doc);
 }
 
@@ -616,9 +774,26 @@ void handleWsMessage(AsyncWebSocketClient *client, const String &msg) {
     config.data.sunriseBrightness = cfg["sunriseBrightness"] | 255;
     config.data.tzOffsetMinutes = cfg["tzOffsetMinutes"] | 180;
 
+    config.data.soundStart = cfg["soundStart"] | 2300;
+    config.data.soundEnd = cfg["soundEnd"] | 600;
+    config.data.soundThreshold = cfg["soundThreshold"] | 60;
+    config.data.soundBrightness = cfg["soundBrightness"] | 40;
+    config.data.soundFadeInSec = cfg["soundFadeInSec"] | 3;
+    config.data.soundHoldSec = cfg["soundHoldSec"] | 120;
+    config.data.soundFadeOutSec = cfg["soundFadeOutSec"] | 20;
+
+    config.data.mqttEnabled = cfg["mqttEnabled"] | false;
+    strlcpy(config.data.mqttHost, cfg["mqttHost"] | "", sizeof(config.data.mqttHost));
+    config.data.mqttPort = cfg["mqttPort"] | 1883;
+    strlcpy(config.data.mqttUser, cfg["mqttUser"] | "", sizeof(config.data.mqttUser));
+    keepOrSet(config.data.mqttPass, cfg["mqttPass"], sizeof(config.data.mqttPass));
+    config.data.mqttIntervalSec = cfg["mqttIntervalSec"] | 0;
+
     config.save();
     configDirty = false;
     timeClient.setTimeOffset(config.data.tzOffsetMinutes * 60);
+    // Смена брокера подхватывается на лету, перезагрузка не нужна
+    mqtt.applyConfig();
 
     bool wifiChanged = strcmp(prevSSID, config.data.wifiSSID) != 0
                     || strcmp(prevPass, config.data.wifiPass) != 0
@@ -638,6 +813,13 @@ void handleWsMessage(AsyncWebSocketClient *client, const String &msg) {
   }
   else if (strcmp(type, "restart") == 0) {
     needsRestart = true;
+  }
+  else if (strcmp(type, "confirmOta") == 0) {
+    failsafe.confirm();
+    JsonDocument resp;
+    resp["type"] = "confirmOtaResult";
+    resp["success"] = true;
+    wsSendJson(client, resp);
   }
   else if (strcmp(type, "forgetWiFi") == 0) {
     // Аварийный выход, если сеть сменилась и портал недоступен
@@ -672,6 +854,134 @@ void setupHttpRoutes() {
     String json;
     serializeJson(doc, json);
     request->send(200, "application/json", json);
+  });
+
+  // Подтверждение прошивки обычным GET — на случай, если до кнопки в
+  // интерфейсе не добраться
+  server.on("/confirm", HTTP_GET, [](AsyncWebServerRequest *request) {
+    failsafe.confirm();
+    request->send(200, "text/plain", "Firmware confirmed");
+  });
+
+  server.on("/metrics", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String body;
+
+    // Ради этой серии всё и затевалось: ночная активность в комнате.
+    // level — мгновенный размах в момент опроса, сам по себе он почти
+    // ничего не значит: Prometheus заходит раз в десятки секунд и
+    // попадает в случайную миллисекунду. Реальную картину даёт peak —
+    // максимум за последнюю минуту, поэтому график строить по нему.
+    body += F("# HELP smartnightlight_sound_level Instant peak-to-peak from the microphone\n");
+    body += F("# TYPE smartnightlight_sound_level gauge\n");
+    body += F("smartnightlight_sound_level ");
+    body += String(sound.level());
+    body += F("\n");
+
+    body += F("# HELP smartnightlight_sound_peak Loudest peak-to-peak over the last 60 s\n");
+    body += F("# TYPE smartnightlight_sound_peak gauge\n");
+    body += F("smartnightlight_sound_peak ");
+    body += String(sound.peak());
+    body += F("\n");
+
+    // Срабатывания монотонно растут — counter, чтобы работали rate()
+    // и increase(): «сколько раз ребёнок вставал за ночь»
+    body += F("# HELP smartnightlight_sound_triggers_total Sound threshold crossings\n");
+    body += F("# TYPE smartnightlight_sound_triggers_total counter\n");
+    body += F("smartnightlight_sound_triggers_total ");
+    body += String(sound.triggers());
+    body += F("\n");
+
+    // Микрофон, отдающий ровно ноль, не отличить от идеальной тишины
+    // никак иначе. Без этой серии «шума не было» и «датчик не
+    // подключён» на графике выглядят одинаково.
+    body += F("# HELP smartnightlight_sound_sensor_present Microphone signal is above the noise floor\n");
+    body += F("# TYPE smartnightlight_sound_sensor_present gauge\n");
+    body += F("smartnightlight_sound_sensor_present ");
+    body += String(sound.present() ? 1 : 0);
+    body += F("\n");
+
+    body += F("# HELP smartnightlight_brightness Current LED brightness 0..255\n");
+    body += F("# TYPE smartnightlight_brightness gauge\n");
+    body += F("smartnightlight_brightness ");
+    body += String(currentBrightness);
+    body += F("\n");
+
+    // Режим — метка, а не число: значение всегда 1, а имя режима
+    // лежит в лейбле. Так его можно фильтровать в запросах.
+    body += F("# HELP smartnightlight_mode_info Active mode\n");
+    body += F("# TYPE smartnightlight_mode_info gauge\n");
+    body += F("smartnightlight_mode_info{mode=\"");
+    body += nl::modeName(currentMode);
+    body += F("\"} 1\n");
+
+    body += F("# HELP smartnightlight_time_valid NTP time is available\n");
+    body += F("# TYPE smartnightlight_time_valid gauge\n");
+    body += F("smartnightlight_time_valid ");
+    body += String(timeValid ? 1 : 0);
+    body += F("\n");
+
+    body += F("# HELP smartnightlight_wifi_rssi_dbm WiFi signal strength\n");
+    body += F("# TYPE smartnightlight_wifi_rssi_dbm gauge\n");
+    body += F("smartnightlight_wifi_rssi_dbm ");
+    body += String(wifiConnected ? WiFi.RSSI() : 0);
+    body += F("\n");
+
+    body += F("# HELP smartnightlight_mqtt_connected MQTT broker connection\n");
+    body += F("# TYPE smartnightlight_mqtt_connected gauge\n");
+    body += F("smartnightlight_mqtt_connected ");
+    body += String(mqtt.isConnected() ? 1 : 0);
+    body += F("\n");
+
+    body += F("# HELP smartnightlight_uptime_seconds System uptime\n");
+    body += F("# TYPE smartnightlight_uptime_seconds gauge\n");
+    body += F("smartnightlight_uptime_seconds ");
+    body += String((millis() - bootMillis) / 1000);
+    body += F("\n");
+
+    body += F("# HELP smartnightlight_free_heap_bytes Free heap memory\n");
+    body += F("# TYPE smartnightlight_free_heap_bytes gauge\n");
+    body += F("smartnightlight_free_heap_bytes ");
+    body += String(ESP.getFreeHeap());
+    body += F("\n");
+
+    // Фрагментация важнее свободного объёма: на ESP8266 падают не от
+    // нехватки памяти, а от нехватки непрерывного куска. Без этих
+    // двух серий такое не видно вовсе.
+    body += F("# HELP smartnightlight_heap_fragmentation_percent Heap fragmentation\n");
+    body += F("# TYPE smartnightlight_heap_fragmentation_percent gauge\n");
+    body += F("smartnightlight_heap_fragmentation_percent ");
+    body += String(ESP.getHeapFragmentation());
+    body += F("\n");
+
+    body += F("# HELP smartnightlight_heap_max_block_bytes Largest contiguous free block\n");
+    body += F("# TYPE smartnightlight_heap_max_block_bytes gauge\n");
+    body += F("smartnightlight_heap_max_block_bytes ");
+    body += String(ESP.getMaxFreeBlockSize());
+    body += F("\n");
+
+    body += F("# HELP smartnightlight_ws_clients Connected WebSocket clients\n");
+    body += F("# TYPE smartnightlight_ws_clients gauge\n");
+    body += F("smartnightlight_ws_clients ");
+    body += String(ws.count());
+    body += F("\n");
+
+    // Ноль — норма; рост означает, что команды с веб-интерфейса до
+    // платы не доезжают
+    body += F("# HELP smartnightlight_ws_rx_drops_total Dropped inbound WS chunks\n");
+    body += F("# TYPE smartnightlight_ws_rx_drops_total counter\n");
+    body += F("smartnightlight_ws_rx_drops_total ");
+    body += String(wsRx.drops());
+    body += F("\n");
+
+    // Причина последнего сброса отличает штатную перезагрузку от
+    // watchdog и исключения. Метка, а не число: значение всегда 1.
+    body += F("# HELP smartnightlight_reset_info Reason of the last reset\n");
+    body += F("# TYPE smartnightlight_reset_info gauge\n");
+    body += F("smartnightlight_reset_info{reason=\"");
+    body += ESP.getResetReason();
+    body += F("\"} 1\n");
+
+    request->send(200, "text/plain; version=0.0.4", body);
   });
 
   server.onNotFound([](AsyncWebServerRequest *request) {

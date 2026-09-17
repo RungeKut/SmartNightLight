@@ -141,6 +141,34 @@ input[type=range] { width: 100%; accent-color: var(--primary); margin: 6px 0 2px
 .hint { font-size: 12px; line-height: 1.5; padding: 8px 10px; border-radius: 8px; margin-top: 4px; }
 .hint.info { background: rgba(94,53,177,.1); color: var(--primary); }
 .hint.warn { background: #FFF3E0; color: #E65100; }
+.ota-banner {
+  background: #FFF3E0;
+  border: 1px solid var(--orange);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+  text-align: center;
+  font-size: 13px;
+  color: #E65100;
+}
+.ota-banner .countdown { font-weight: 700; }
+.meter {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--border);
+  overflow: hidden;
+  margin: 6px 0 2px;
+}
+.meter .fill { height: 100%; background: var(--primary); transition: width .2s; }
+.meter .mark {
+  position: absolute; top: -3px; width: 2px; height: 16px;
+  background: var(--red);
+}
+.meter-legend {
+  display: flex; justify-content: space-between;
+  font-size: 11px; color: var(--text-secondary);
+}
 .section-title {
   font-size: 12px; font-weight: 600; color: var(--text-secondary);
   text-transform: uppercase; letter-spacing: .5px; margin: 16px 0 8px;
@@ -181,6 +209,15 @@ input[type=range] { width: 100%; accent-color: var(--primary); margin: 6px 0 2px
 
 <div class="container">
 
+<div id="otaBanner" class="hidden">
+  <div class="ota-banner">
+    Загружена новая прошивка. Подтвердите её в течение
+    <span class="countdown" id="otaCountdown">--</span> с, иначе устройство перезагрузится.
+    <br><button class="btn btn-primary" onclick="confirmOta()"
+        style="width:auto;padding:6px 24px;margin-top:8px">Подтвердить</button>
+  </div>
+</div>
+
 <!-- ======== DASHBOARD ======== -->
 <div id="tab-dashboard" class="tab-content active">
 
@@ -205,6 +242,23 @@ input[type=range] { width: 100%; accent-color: var(--primary); margin: 6px 0 2px
     <input type="range" id="manualBrightness" min="0" max="255" value="160"
            oninput="onBrightnessInput()" onchange="sendManual()">
     <div class="hint info">Ручное включение действует до перезагрузки — потом светильник снова живёт по расписанию.</div>
+  </div>
+
+  <div class="card">
+    <h3>Микрофон</h3>
+    <div class="row"><span class="label">Сейчас</span><span class="value" id="soundLevel">--</span></div>
+    <div class="meter">
+      <div class="fill" id="soundFill" style="width:0"></div>
+      <div class="mark" id="soundMark" style="left:0"></div>
+    </div>
+    <div class="meter-legend"><span>0</span><span id="soundThresholdLabel">порог --</span><span>1023</span></div>
+    <div class="row"><span class="label">Пик за минуту</span><span id="soundPeak">--</span></div>
+    <div class="row"><span class="label">Срабатываний</span><span id="soundTriggers">--</span></div>
+    <div class="row"><span class="label">Состояние</span><span id="soundState">--</span></div>
+    <div id="soundHint" class="hint info">
+      Красная риска — порог. Подбирайте так: в тишине полоса не должна доходить до риски,
+      а шаги по комнате — должны. Грубая настройка — подстроечным резистором на модуле.
+    </div>
   </div>
 
   <div class="card">
@@ -300,6 +354,58 @@ input[type=range] { width: 100%; accent-color: var(--primary); margin: 6px 0 2px
   </div>
 
   <div class="card">
+    <div class="section-title">Реакция на шум</div>
+    <div class="row">
+      <span class="label">Разгораться от шума ночью</span>
+      <label class="switch"><input type="checkbox" id="cfgSoundEnabled"><span class="slider-sw"></span></label>
+    </div>
+    <label style="margin-top:8px">Ночное окно: с</label>
+    <input type="time" id="cfgSoundStart" value="23:00">
+    <label>по</label>
+    <input type="time" id="cfgSoundEnd" value="06:00">
+    <label>Порог срабатывания (0..1023)</label>
+    <input type="number" id="cfgSoundThreshold" min="0" max="1023" value="60">
+    <label>Яркость отклика</label>
+    <input type="range" id="cfgSoundBrightness" min="0" max="255" value="40">
+    <label>Разгорание, сек.</label>
+    <input type="number" id="cfgSoundFadeIn" min="0" max="3600" value="3">
+    <label>Гореть, сек.</label>
+    <input type="number" id="cfgSoundHold" min="0" max="3600" value="120">
+    <label>Затухание, сек.</label>
+    <input type="number" id="cfgSoundFadeOut" min="0" max="3600" value="20">
+    <div class="hint info">
+      Отклик срабатывает только когда светильник иначе был бы погашен: он не вмешивается
+      ни в засыпание, ни в рассвет. Новый шум во время отклика продлевает его с начала.
+      Текущий уровень и порог видны на вкладке «Светильник».
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Home Assistant (MQTT)</div>
+    <div class="row">
+      <span class="label">Публиковать в MQTT</span>
+      <label class="switch"><input type="checkbox" id="cfgMqttEnabled"><span class="slider-sw"></span></label>
+    </div>
+    <label style="margin-top:8px">Брокер</label>
+    <input type="text" id="cfgMqttHost" placeholder="192.168.88.3" autocomplete="off">
+    <label>Порт</label>
+    <input type="number" id="cfgMqttPort" min="1" max="65535" value="1883">
+    <label>Пользователь</label>
+    <input type="text" id="cfgMqttUser" autocomplete="off">
+    <label>Пароль</label>
+    <input type="password" id="cfgMqttPass" placeholder="Оставьте пустым, чтобы не менять" autocomplete="new-password">
+    <label>Период публикации, сек. (0 — по умолчанию)</label>
+    <input type="number" id="cfgMqttInterval" min="0" max="3600" value="0">
+    <div class="row" style="margin-top:8px">
+      <span class="label">Состояние</span><span id="mqttStatus">--</span>
+    </div>
+    <div class="hint info">
+      Сущности появятся в Home Assistant сами, через автодискавери — YAML править не нужно.
+      Лампа в HA управляет ручным включением поверх расписания.
+    </div>
+  </div>
+
+  <div class="card">
     <button class="btn btn-primary" onclick="saveConfig()">Сохранить</button>
     <button class="btn btn-outline" onclick="restartDevice()">Перезагрузить устройство</button>
     <button class="btn btn-danger" onclick="forgetWiFi()">Забыть сеть и поднять точку доступа</button>
@@ -365,6 +471,11 @@ function handleMessage(msg) {
       if (msg.success) { setSettingsDirty(false); showErrors([]); }
       showToast(msg.message || 'Сохранено');
       break;
+    case 'confirmOtaResult':
+      if (state) state.ota_pending = false;
+      updateOtaBanner();
+      showToast('Прошивка подтверждена');
+      break;
   }
 }
 
@@ -419,6 +530,67 @@ function updateDashboard() {
     ? (state.heap / 1024).toFixed(1) + ' КБ' : '--';
 
   document.getElementById('apHint').classList.toggle('hidden', !state.ap_mode);
+
+  updateSound();
+  updateOtaBanner();
+  updateMqttStatus();
+}
+
+// ======== Микрофон ========
+function updateSound() {
+  const level = state.sound_level || 0;
+  const threshold = (state.config && state.config.soundThreshold) || 0;
+
+  // Микрофон, не подключённый к A0, даёт ровно ноль. От идеальной
+  // тишины это не отличить, поэтому говорим прямо, что сигнала не было.
+  document.getElementById('soundLevel').textContent =
+    state.sound_present ? level : 'нет сигнала';
+
+  document.getElementById('soundFill').style.width = (level / 1023 * 100) + '%';
+  document.getElementById('soundMark').style.left = (threshold / 1023 * 100) + '%';
+  document.getElementById('soundThresholdLabel').textContent = 'порог ' + threshold;
+  document.getElementById('soundPeak').textContent = state.sound_peak !== undefined
+    ? state.sound_peak : '--';
+  document.getElementById('soundTriggers').textContent = state.sound_triggers !== undefined
+    ? state.sound_triggers : '--';
+
+  const st = document.getElementById('soundState');
+  if (!state.sound_present) {
+    st.innerHTML = '<span class="badge warn">микрофон не отвечает</span>';
+  } else if (state.sound_active) {
+    st.innerHTML = '<span class="badge ok">отклик идёт</span>';
+  } else {
+    st.innerHTML = '<span class="badge">тишина</span>';
+  }
+}
+
+// ======== Баннер подтверждения прошивки ========
+function updateOtaBanner() {
+  const pending = state && state.ota_pending;
+  document.getElementById('otaBanner').classList.toggle('hidden', !pending);
+  if (pending) {
+    document.getElementById('otaCountdown').textContent = state.ota_remaining || 0;
+  }
+}
+
+function confirmOta() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) { showToast('Нет связи с устройством'); return; }
+  ws.send(JSON.stringify({type: 'confirmOta'}));
+}
+
+function updateMqttStatus() {
+  const el = document.getElementById('mqttStatus');
+  if (!el) return;
+  if (!state.mqtt_enabled) el.innerHTML = '<span class="badge">выключен</span>';
+  else if (state.mqtt_connected) el.innerHTML = '<span class="badge ok">на связи</span>';
+  else {
+    // Причину показываем рядом: «не авторизован» и «брокер недоступен»
+    // лечатся совершенно по-разному
+    el.innerHTML = '<span class="badge err">нет связи</span>';
+    if (state.mqtt_error) {
+      el.innerHTML += ' <span style="font-size:11px">' + state.mqtt_error + '</span>';
+    }
+  }
 }
 
 function modeLabel(mode) {
@@ -428,7 +600,8 @@ function modeLabel(mode) {
     signal: 'Сигнал «пора спать»',
     dim: 'Затухание',
     sleep: 'Интервал сна',
-    sunrise: 'Рассвет'
+    sunrise: 'Рассвет',
+    sound: 'Отклик на шум'
   }[mode] || '--';
 }
 
@@ -501,6 +674,21 @@ function updateSettings() {
   document.getElementById('cfgSunLength').value = c.sunLength;
   document.getElementById('cfgSunriseBrightness').value = c.sunriseBrightness;
 
+  document.getElementById('cfgSoundEnabled').checked = !!(f & 0x10);
+  document.getElementById('cfgSoundStart').value = hhmmToInput(c.soundStart);
+  document.getElementById('cfgSoundEnd').value = hhmmToInput(c.soundEnd);
+  document.getElementById('cfgSoundThreshold').value = c.soundThreshold;
+  document.getElementById('cfgSoundBrightness').value = c.soundBrightness;
+  document.getElementById('cfgSoundFadeIn').value = c.soundFadeInSec;
+  document.getElementById('cfgSoundHold').value = c.soundHoldSec;
+  document.getElementById('cfgSoundFadeOut').value = c.soundFadeOutSec;
+
+  document.getElementById('cfgMqttEnabled').checked = !!c.mqttEnabled;
+  document.getElementById('cfgMqttHost').value = c.mqttHost || '';
+  document.getElementById('cfgMqttPort').value = c.mqttPort;
+  document.getElementById('cfgMqttUser').value = c.mqttUser || '';
+  document.getElementById('cfgMqttInterval').value = c.mqttIntervalSec;
+
   if (c.signalMinutes !== undefined) {
     document.getElementById('signalHint').textContent =
       'Вспышки идут первые ' + c.signalMinutes +
@@ -550,6 +738,7 @@ function collectConfig(errors) {
   if (document.getElementById('cfgSignalEnabled').checked) flags |= 0x02;
   if (document.getElementById('cfgDimEnabled').checked) flags |= 0x04;
   if (document.getElementById('cfgSunriseEnabled').checked) flags |= 0x08;
+  if (document.getElementById('cfgSoundEnabled').checked) flags |= 0x10;
 
   return {
     wifiSSID: document.getElementById('cfgSSID').value,
@@ -567,6 +756,22 @@ function collectConfig(errors) {
     sunriseLength: num('cfgSunriseLength', 'Продолжительность рассвета', 60, {min: 0, max: 255}, errors),
     sunLength: num('cfgSunLength', 'Время после рассвета', 30, {min: 0, max: 255}, errors),
     sunriseBrightness: parseInt(document.getElementById('cfgSunriseBrightness').value, 10),
+
+    soundStart: inputToHhmm('cfgSoundStart', errors, 'Начало ночного окна'),
+    soundEnd: inputToHhmm('cfgSoundEnd', errors, 'Конец ночного окна'),
+    soundThreshold: num('cfgSoundThreshold', 'Порог шума', 60, {min: 0, max: 1023}, errors),
+    soundBrightness: parseInt(document.getElementById('cfgSoundBrightness').value, 10),
+    soundFadeInSec: num('cfgSoundFadeIn', 'Разгорание', 3, {min: 0, max: 3600}, errors),
+    soundHoldSec: num('cfgSoundHold', 'Время горения', 120, {min: 0, max: 3600}, errors),
+    soundFadeOutSec: num('cfgSoundFadeOut', 'Затухание', 20, {min: 0, max: 3600}, errors),
+
+    mqttEnabled: document.getElementById('cfgMqttEnabled').checked,
+    mqttHost: document.getElementById('cfgMqttHost').value,
+    mqttPort: num('cfgMqttPort', 'Порт MQTT', 1883, {min: 1, max: 65535}, errors),
+    mqttUser: document.getElementById('cfgMqttUser').value,
+    // Пустой пароль = оставить прежний, как и у WiFi
+    mqttPass: document.getElementById('cfgMqttPass').value,
+    mqttIntervalSec: num('cfgMqttInterval', 'Период публикации', 0, {min: 0, max: 3600}, errors),
   };
 }
 
@@ -612,6 +817,15 @@ function showToast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
 }
+
+// Обратный отсчёт баннера тикает локально: телеметрия приходит раз в
+// секунду, но при потере связи цифра иначе застыла бы
+setInterval(() => {
+  if (state && state.ota_pending && state.ota_remaining > 0) {
+    state.ota_remaining--;
+    document.getElementById('otaCountdown').textContent = state.ota_remaining;
+  }
+}, 1000);
 
 // ======== Старт ========
 connectWS();

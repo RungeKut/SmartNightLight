@@ -47,6 +47,17 @@ inline uint16_t minutesSince(uint16_t startHhmm, uint16_t nowHhmm) {
   return (uint16_t)diff;
 }
 
+// Окно, заданное двумя моментами суток, а не началом и длительностью:
+// ночной интервал вроде 23:00-06:00 удобнее задавать именно так, и он
+// не влезает в uint8_t минут.
+//
+// Совпадающие начало и конец means "окно не задано" — иначе пришлось
+// бы гадать, круглые это сутки или ноль минут.
+inline bool insideWindow(uint16_t startHhmm, uint16_t endHhmm, uint16_t nowHhmm) {
+  if (startHhmm == endHhmm) return false;
+  return minutesSince(startHhmm, nowHhmm) <= minutesSince(startHhmm, endHhmm);
+}
+
 // ==================== Настройки ====================
 
 // Биты маски включённых режимов. Значения совпадают с первой
@@ -55,6 +66,7 @@ const uint8_t FLAG_SLEEP   = 0x01;  // режим отхода ко сну
 const uint8_t FLAG_SIGNAL  = 0x02;  // вспышки "пора спать"
 const uint8_t FLAG_DIM     = 0x04;  // затухание при засыпании
 const uint8_t FLAG_SUNRISE = 0x08;  // имитация рассвета
+const uint8_t FLAG_SOUND   = 0x10;  // разгорание от шума ночью
 
 // Длительность вспышек "пора спать", минут от начала интервала сна
 const uint8_t SIGNAL_MINUTES = 5;
@@ -72,7 +84,28 @@ struct Settings {
   uint8_t  sunriseLength;      // минут на разгорание
   uint8_t  sunLength;          // минут держать максимум после рассвета
   uint8_t  sunriseBrightness;  // максимум рассвета
+
+  // Разгорание от шума. Окно задано двумя моментами суток: ночью
+  // светильник должен откликаться, а днём шум стоит постоянно.
+  uint16_t soundStart;         // hhmm, начало ночного окна
+  uint16_t soundEnd;           // hhmm, конец
+  uint8_t  soundBrightness;    // яркость отклика
+  uint16_t soundFadeInSec;     // разгорание, секунд
+  uint16_t soundHoldSec;       // удержание, секунд
+  uint16_t soundFadeOutSec;    // затухание, секунд
 };
+
+// Что происходит со звуком прямо сейчас. Состояние живёт снаружи:
+// модуль не умеет ни читать микрофон, ни считать время.
+struct SoundEvent {
+  bool     active;    // отсчёт после срабатывания идёт
+  uint32_t secSince;  // секунд с последнего превышения порога
+};
+
+// Полная длительность отклика на шум
+inline uint32_t soundTotalSec(const Settings &s) {
+  return (uint32_t)s.soundFadeInSec + s.soundHoldSec + s.soundFadeOutSec;
+}
 
 // ==================== Режимы ====================
 
@@ -83,6 +116,7 @@ enum Mode : uint8_t {
   MODE_DIM,       // затухание при засыпании
   MODE_SLEEP,     // интервал сна, затухание выключено
   MODE_SUNRISE,   // имитация рассвета
+  MODE_SOUND,     // отклик на ночной шум
 };
 
 inline const char* modeName(Mode m) {
@@ -92,6 +126,7 @@ inline const char* modeName(Mode m) {
     case MODE_DIM:     return "dim";
     case MODE_SLEEP:   return "sleep";
     case MODE_SUNRISE: return "sunrise";
+    case MODE_SOUND:   return "sound";
     default:           return "off";
   }
 }
@@ -147,12 +182,43 @@ inline uint8_t dimSunriseBrightness(const Settings &s, uint16_t elapsed) {
   return curveBrightness(s.sunriseBrightness, squaredRatio(elapsed, s.sunriseLength));
 }
 
+// Отклик на шум идёт от НУЛЯ и возвращается в ноль, поэтому
+// MIN_BRIGHTNESS здесь не подмешивается: задача — сначала зажечься в
+// тёмной комнате, потом погаснуть совсем, а не оставить тление.
+inline uint8_t rampBrightness(float maxBrightness, float ratioSquared) {
+  return clampBrightness(maxBrightness * ratioSquared);
+}
+
+// Яркость отклика на шум по секундам с момента срабатывания.
+// Возвращает 0, когда отклик закончился.
+inline uint8_t soundBrightnessAt(const Settings &s, uint32_t secSince) {
+  uint32_t fadeIn = s.soundFadeInSec;
+  uint32_t hold = fadeIn + s.soundHoldSec;
+  uint32_t total = hold + s.soundFadeOutSec;
+
+  if (secSince < fadeIn) {
+    return rampBrightness(s.soundBrightness,
+                          squaredRatio((uint16_t)secSince, s.soundFadeInSec));
+  }
+  if (secSince < hold) return s.soundBrightness;
+  if (secSince < total) {
+    uint32_t left = total - secSince;
+    return rampBrightness(s.soundBrightness,
+                          squaredRatio((uint16_t)left, s.soundFadeOutSec));
+  }
+  return 0;
+}
+
 // ==================== Главное правило ====================
 //
 // blinkOn — фаза мигания, её задаёт вызывающий: логика не знает,
 // сколько прошло миллисекунд, и не должна зависеть от millis().
+//
+// sound — состояние отклика на шум, тоже снаружи. По умолчанию его
+// нет, чтобы вызов без микрофона оставался прежним.
 inline Result compute(const Settings &s, uint16_t nowHhmm,
-                      bool manualOn, bool blinkOn) {
+                      bool manualOn, bool blinkOn,
+                      const SoundEvent &sound = SoundEvent{false, 0}) {
   Result r;
 
   if (manualOn) {
@@ -188,6 +254,20 @@ inline Result compute(const Settings &s, uint16_t nowHhmm,
     if (elapsed <= total) {
       r.brightness = dimSunriseBrightness(s, elapsed);
       r.mode = MODE_SUNRISE;
+      return r;
+    }
+  }
+
+  // Шум проверяется последним, то есть отклик возможен только там,
+  // где светильник иначе был бы погашен. Так он не вмешивается ни в
+  // засыпание, ни в рассвет: ребёнок, ворочающийся под затухание, не
+  // должен получать вспышку яркости.
+  if ((s.flags & FLAG_SOUND) && sound.active
+      && insideWindow(s.soundStart, s.soundEnd, nowHhmm)) {
+    uint8_t b = soundBrightnessAt(s, sound.secSince);
+    if (b > 0) {
+      r.brightness = b;
+      r.mode = MODE_SOUND;
       return r;
     }
   }
