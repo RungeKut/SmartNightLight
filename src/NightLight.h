@@ -11,6 +11,7 @@
 #define NightLight_h
 
 #include <stdint.h>
+#include <math.h>
 
 namespace nl {
 
@@ -93,13 +94,15 @@ struct Settings {
   uint16_t soundFadeInSec;     // разгорание, секунд
   uint16_t soundHoldSec;       // удержание, секунд
   uint16_t soundFadeOutSec;    // затухание, секунд
+  bool     soundAccumulate;    // повторный шум добавляет яркости
 };
 
 // Что происходит со звуком прямо сейчас. Состояние живёт снаружи:
 // модуль не умеет ни читать микрофон, ни считать время.
 struct SoundEvent {
   bool     active;    // отсчёт после срабатывания идёт
-  uint32_t secSince;  // секунд с последнего превышения порога
+  uint32_t secSince;  // секунд с начала текущего отклика
+  uint8_t  target;    // до какой яркости этот отклик разгорается
 };
 
 // Полная длительность отклика на шум
@@ -189,24 +192,52 @@ inline uint8_t rampBrightness(float maxBrightness, float ratioSquared) {
   return clampBrightness(maxBrightness * ratioSquared);
 }
 
-// Яркость отклика на шум по секундам с момента срабатывания.
+// Яркость отклика на шум по секундам с начала отклика.
 // Возвращает 0, когда отклик закончился.
-inline uint8_t soundBrightnessAt(const Settings &s, uint32_t secSince) {
+//
+// target передаётся отдельно от настроек: при включённом накоплении он
+// растёт от повторных срабатываний и уже не равен soundBrightness.
+inline uint8_t soundBrightnessAt(const Settings &s, uint8_t target,
+                                 uint32_t secSince) {
   uint32_t fadeIn = s.soundFadeInSec;
   uint32_t hold = fadeIn + s.soundHoldSec;
   uint32_t total = hold + s.soundFadeOutSec;
 
   if (secSince < fadeIn) {
-    return rampBrightness(s.soundBrightness,
-                          squaredRatio((uint16_t)secSince, s.soundFadeInSec));
+    return rampBrightness(target, squaredRatio((uint16_t)secSince, s.soundFadeInSec));
   }
-  if (secSince < hold) return s.soundBrightness;
+  if (secSince < hold) return target;
   if (secSince < total) {
     uint32_t left = total - secSince;
-    return rampBrightness(s.soundBrightness,
-                          squaredRatio((uint16_t)left, s.soundFadeOutSec));
+    return rampBrightness(target, squaredRatio((uint16_t)left, s.soundFadeOutSec));
   }
   return 0;
+}
+
+// Куда на кривой разгорания встать, чтобы яркость была ровно current.
+//
+// Нужно при повторном шуме. Наивное «начать отклик заново» ставит отсчёт
+// в ноль, а кривая разгорания в нуле даёт НОЛЬ яркости — светильник
+// гаснет и разгорается снова, то есть мигает ровно в тот момент, когда
+// должен был просто продолжить гореть.
+//
+// Обращаем кривую: b = target * (t/L)^2, значит t = L * sqrt(b/target).
+inline uint32_t soundResumeSec(const Settings &s, uint8_t target, uint8_t current) {
+  if (target == 0 || s.soundFadeInSec == 0) return 0;
+  // Уже на максимуме или выше — сразу к началу удержания
+  if (current >= target) return s.soundFadeInSec;
+  float ratio = (float)current / (float)target;
+  return (uint32_t)(s.soundFadeInSec * sqrtf(ratio));
+}
+
+// Целевая яркость нового отклика: с накоплением она прибавляется к уже
+// набранной, без него остаётся прежней.
+inline uint8_t soundNextTarget(const Settings &s, bool responseActive,
+                               uint8_t currentTarget) {
+  if (!responseActive) return s.soundBrightness;
+  if (!s.soundAccumulate) return currentTarget;
+  uint16_t sum = (uint16_t)currentTarget + s.soundBrightness;
+  return (sum > 255) ? 255 : (uint8_t)sum;
 }
 
 // ==================== Главное правило ====================
@@ -218,7 +249,7 @@ inline uint8_t soundBrightnessAt(const Settings &s, uint32_t secSince) {
 // нет, чтобы вызов без микрофона оставался прежним.
 inline Result compute(const Settings &s, uint16_t nowHhmm,
                       bool manualOn, bool blinkOn,
-                      const SoundEvent &sound = SoundEvent{false, 0}) {
+                      const SoundEvent &sound = SoundEvent{false, 0, 0}) {
   Result r;
 
   if (manualOn) {
@@ -264,7 +295,7 @@ inline Result compute(const Settings &s, uint16_t nowHhmm,
   // должен получать вспышку яркости.
   if ((s.flags & FLAG_SOUND) && sound.active
       && insideWindow(s.soundStart, s.soundEnd, nowHhmm)) {
-    uint8_t b = soundBrightnessAt(s, sound.secSince);
+    uint8_t b = soundBrightnessAt(s, sound.target, sound.secSince);
     if (b > 0) {
       r.brightness = b;
       r.mode = MODE_SOUND;

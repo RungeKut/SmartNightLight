@@ -27,13 +27,15 @@ static Settings defaults() {
   s.soundFadeInSec = 3;
   s.soundHoldSec = 120;
   s.soundFadeOutSec = 20;
+  s.soundAccumulate = false;
   return s;
 }
 
-static SoundEvent heard(uint32_t secAgo) {
+static SoundEvent heard(uint32_t secAgo, uint8_t target = 40) {
   SoundEvent e;
   e.active = true;
   e.secSince = secAgo;
+  e.target = target;
   return e;
 }
 
@@ -41,6 +43,7 @@ static SoundEvent silence() {
   SoundEvent e;
   e.active = false;
   e.secSince = 0;
+  e.target = 0;
   return e;
 }
 
@@ -416,6 +419,98 @@ void test_sound_all_zero_durations_stays_off() {
   TEST_ASSERT_EQUAL(MODE_OFF, compute(s, 200, false, true, heard(0)).mode);
 }
 
+// ==================== Накопление яркости отклика ====================
+
+// Первое срабатывание всегда даёт обычную яркость — накапливать пока
+// нечего
+void test_first_response_uses_plain_brightness() {
+  Settings s = defaults();
+  s.soundAccumulate = true;
+  TEST_ASSERT_EQUAL_UINT8(40, soundNextTarget(s, false, 0));
+}
+
+void test_repeat_adds_brightness_when_enabled() {
+  Settings s = defaults();
+  s.soundAccumulate = true;
+  TEST_ASSERT_EQUAL_UINT8(80, soundNextTarget(s, true, 40));
+  TEST_ASSERT_EQUAL_UINT8(120, soundNextTarget(s, true, 80));
+}
+
+void test_repeat_keeps_brightness_when_disabled() {
+  Settings s = defaults();
+  s.soundAccumulate = false;
+  TEST_ASSERT_EQUAL_UINT8(40, soundNextTarget(s, true, 40));
+}
+
+// Накопление упирается в потолок шкалы, а не заворачивается через ноль
+void test_accumulation_saturates_at_full() {
+  Settings s = defaults();
+  s.soundAccumulate = true;
+  s.soundBrightness = 200;
+  TEST_ASSERT_EQUAL_UINT8(255, soundNextTarget(s, true, 200));
+  TEST_ASSERT_EQUAL_UINT8(255, soundNextTarget(s, true, 255));
+}
+
+void test_accumulated_target_drives_the_curve() {
+  Settings s = defaults();
+  s.flags = FLAG_SOUND;
+  // Удержание при накопленной цели 120 даёт именно 120
+  TEST_ASSERT_EQUAL_UINT8(120, compute(s, 200, false, true, heard(10, 120)).brightness);
+}
+
+// ==================== Возобновление без мигания ====================
+
+// Главный регрессионный тест. Наивное "начать отклик заново" ставит
+// отсчёт в ноль, а кривая разгорания в нуле даёт ноль яркости: свет
+// гаснет и разжигается снова. Возобновлять надо с той точки, где
+// яркость уже есть.
+void test_resume_does_not_drop_to_zero() {
+  Settings s = defaults();
+  s.flags = FLAG_SOUND;
+
+  // Светильник в середине затухания
+  uint8_t current = compute(s, 200, false, true, heard(133, 40)).brightness;
+  TEST_ASSERT_TRUE(current > 0 && current < 40);
+
+  // Пришёл новый шум: встаём на кривую там, где яркость уже есть
+  uint32_t resume = soundResumeSec(s, 40, current);
+  uint8_t after = soundBrightnessAt(s, 40, resume);
+  TEST_ASSERT_TRUE_MESSAGE(after > 0, "свет провалился в ноль при повторе");
+  // Допуск на округление долей секунды
+  TEST_ASSERT_TRUE(after + 6 >= current);
+}
+
+// При накоплении возобновление тоже не роняет яркость: цель выросла,
+// но текущая точка на новой кривой соответствует прежнему свечению
+void test_resume_with_accumulation_keeps_brightness() {
+  Settings s = defaults();
+  s.soundAccumulate = true;
+
+  uint8_t current = soundBrightnessAt(s, 40, 3);   // удержание на 40
+  TEST_ASSERT_EQUAL_UINT8(40, current);
+
+  uint8_t target = soundNextTarget(s, true, 40);   // стало 80
+  uint32_t resume = soundResumeSec(s, target, current);
+  uint8_t after = soundBrightnessAt(s, target, resume);
+  TEST_ASSERT_TRUE_MESSAGE(after + 6 >= current, "яркость упала при накоплении");
+  TEST_ASSERT_TRUE_MESSAGE(after <= target, "перескочили выше цели");
+}
+
+// Если светильник уже на максимуме, возобновление ставит нас в начало
+// удержания, а не в конец разгорания
+void test_resume_at_full_goes_to_hold() {
+  Settings s = defaults();
+  TEST_ASSERT_EQUAL_UINT32(s.soundFadeInSec, soundResumeSec(s, 40, 40));
+  TEST_ASSERT_EQUAL_UINT32(s.soundFadeInSec, soundResumeSec(s, 40, 255));
+}
+
+void test_resume_handles_zero_values() {
+  Settings s = defaults();
+  TEST_ASSERT_EQUAL_UINT32(0, soundResumeSec(s, 0, 0));
+  s.soundFadeInSec = 0;
+  TEST_ASSERT_EQUAL_UINT32(0, soundResumeSec(s, 40, 20));
+}
+
 // Unity требует эти две функции даже пустыми: они вызываются вокруг
 // каждого теста, а общего состояния здесь нет.
 void setUp(void) {}
@@ -456,5 +551,14 @@ int main(int, char **) {
   RUN_TEST(test_manual_wins_over_sound);
   RUN_TEST(test_sound_zero_fade_in_is_instant);
   RUN_TEST(test_sound_all_zero_durations_stays_off);
+  RUN_TEST(test_first_response_uses_plain_brightness);
+  RUN_TEST(test_repeat_adds_brightness_when_enabled);
+  RUN_TEST(test_repeat_keeps_brightness_when_disabled);
+  RUN_TEST(test_accumulation_saturates_at_full);
+  RUN_TEST(test_accumulated_target_drives_the_curve);
+  RUN_TEST(test_resume_does_not_drop_to_zero);
+  RUN_TEST(test_resume_with_accumulation_keeps_brightness);
+  RUN_TEST(test_resume_at_full_goes_to_hold);
+  RUN_TEST(test_resume_handles_zero_values);
   return UNITY_END();
 }

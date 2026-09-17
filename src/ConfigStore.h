@@ -83,6 +83,12 @@ struct ConfigData {
   // ====== Добавлено В КОНЕЦ: гамма ШИМ ======
   // Хранится умноженной на 10: 22 = 2.2. См. src/Dimmer.h.
   uint8_t  pwmGammaX10;
+
+  // ====== Добавлено В КОНЕЦ: накопление яркости отклика ======
+  // Хранится как 0/1/0xFF, чтобы нетронутую flash было видно: у bool
+  // 0xFF читается как true, и отличить его от осознанного "включено"
+  // было бы нельзя.
+  uint8_t  soundAccumulate;
 };
 
 class ConfigStore {
@@ -144,6 +150,7 @@ public:
     data.soundFadeInSec = 3;
     data.soundHoldSec = 120;
     data.soundFadeOutSec = 20;
+    data.soundAccumulate = 0;
   }
 
   void setMqttDefaults() {
@@ -173,6 +180,7 @@ public:
     s.soundFadeInSec = data.soundFadeInSec;
     s.soundHoldSec = data.soundHoldSec;
     s.soundFadeOutSec = data.soundFadeOutSec;
+    s.soundAccumulate = (data.soundAccumulate != 0);
     return s;
   }
 
@@ -206,6 +214,7 @@ private:
       if (data.soundFadeInSec > 3600) data.soundFadeInSec = 3;
       if (data.soundHoldSec > 3600) data.soundHoldSec = 120;
       if (data.soundFadeOutSec > 3600) data.soundFadeOutSec = 20;
+      if (data.soundAccumulate > 1) data.soundAccumulate = 0;
     }
 
     // Тот же приём для MQTT: порт 0xFFFF выдаёт неинициализированный блок

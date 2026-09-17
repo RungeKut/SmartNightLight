@@ -86,6 +86,9 @@ bool manualOn = false;
 // а не в NightLight.h: логика не должна знать про millis().
 uint32_t soundTriggerMs = 0;
 bool soundActive = false;
+// До какой яркости разгорается текущий отклик. С накоплением растёт от
+// повторных срабатываний, без него равна настройке.
+uint8_t soundTarget = 0;
 
 // Отдельный таймер для СЧЁТА событий. Он живёт своей жизнью, потому что
 // считать надо круглосуточно, а светом отклик управляет только в окне.
@@ -94,6 +97,14 @@ bool soundEventActive = false;
 // Пауза, после которой шум считается новым событием. Без неё счётчик
 // рос бы десять раз в секунду, пока в комнате разговаривают.
 #define SOUND_EVENT_GAP_SEC 30
+
+// Отдельная, короткая пауза — граница «всплеска». Ею отделяется один
+// хлопок от другого: шаги по комнате идут с интервалом в пару секунд, и
+// для накопления яркости это разные всплески, а вот для счётчика
+// событий — всё ещё один поход в туалет.
+uint32_t soundBurstMs = 0;
+bool soundBurstActive = false;
+#define SOUND_BURST_GAP_SEC 3
 
 uint8_t currentBrightness = 0;
 nl::Mode currentMode = nl::MODE_OFF;
@@ -206,28 +217,54 @@ void updateSound(uint32_t now) {
                && nl::insideWindow(s.soundStart, s.soundEnd, nowHhmm);
   bool loud = sound.exceeded(config.data.soundThreshold);
 
+  bool newBurst = !soundBurstActive;
+
   if (loud) {
     // Событие — это шум, отделённый от предыдущего паузой. Считаем
     // одинаково днём и ночью, иначе счётчики было бы не сравнить.
     if (!soundEventActive) sound.countTrigger(inWindow);
     soundEventMs = now;
     soundEventActive = true;
+    soundBurstMs = now;
+    soundBurstActive = true;
 
     // А вот свет — только в окне и только если режим включён
     if ((config.data.flags & nl::FLAG_SOUND) && inWindow) {
-      // Новый шум во время отклика продлевает его с начала: ребёнок,
-      // который ходит по комнате, не должен остаться в темноте на
-      // середине затухания.
-      soundTriggerMs = now;
-      soundActive = true;
+      if (newBurst) {
+        // Новый всплеск: пересчитываем цель и встаём на кривую там, где
+        // яркость уже есть, а не в её начале. Иначе повторный шум ронял
+        // бы свет в ноль и разжигал заново — то есть мигал бы ровно
+        // тогда, когда должен просто продолжить гореть.
+        uint32_t secSince = soundActive ? (now - soundTriggerMs) / 1000 : 0;
+        uint8_t current = soundActive
+                        ? nl::soundBrightnessAt(s, soundTarget, secSince) : 0;
+        soundTarget = nl::soundNextTarget(s, soundActive, soundTarget);
+        uint32_t resume = soundActive
+                        ? nl::soundResumeSec(s, soundTarget, current) : 0;
+        soundTriggerMs = now - resume * 1000UL;
+        soundActive = true;
+      } else if (soundActive) {
+        // Тот же всплеск продолжается. Цель НЕ трогаем: иначе при
+        // включённом накоплении она росла бы на каждом измерении, то
+        // есть десять раз в секунду. Просто не даём уйти в затухание,
+        // пока шумно, — придерживаем отсчёт на конце удержания.
+        uint32_t holdEnd = (uint32_t)s.soundFadeInSec + s.soundHoldSec;
+        if ((now - soundTriggerMs) / 1000 > holdEnd) {
+          soundTriggerMs = now - holdEnd * 1000UL;
+        }
+      }
     }
   }
 
   if (soundEventActive && (now - soundEventMs) / 1000 > SOUND_EVENT_GAP_SEC) {
     soundEventActive = false;
   }
+  if (soundBurstActive && (now - soundBurstMs) / 1000 > SOUND_BURST_GAP_SEC) {
+    soundBurstActive = false;
+  }
   if (soundActive && (now - soundTriggerMs) / 1000 > nl::soundTotalSec(s)) {
     soundActive = false;
+    soundTarget = 0;   // следующий отклик начнётся с обычной яркости
   }
 }
 
@@ -239,6 +276,7 @@ void applyNightLight() {
   nl::SoundEvent ev;
   ev.active = soundActive;
   ev.secSince = soundActive ? (millis() - soundTriggerMs) / 1000 : 0;
+  ev.target = soundTarget;
 
   nl::Result r = nl::compute(s, nowHhmm, manualOn, blinkOn, ev);
 
@@ -534,6 +572,7 @@ void fillSystemState(JsonDocument &doc) {
       config.data.soundStart, config.data.soundEnd, nowHhmm);
   doc["sound_present"] = sound.present();
   doc["sound_active"] = soundActive;
+  doc["sound_target"] = soundActive ? soundTarget : 0;
 
   doc["mqtt_enabled"] = mqtt.isEnabled();
   doc["mqtt_connected"] = mqtt.isConnected();
@@ -566,6 +605,7 @@ MqttClient::Payload buildMqttPayload() {
   p.sleepEnabled = (config.data.flags & nl::FLAG_SLEEP) != 0;
   p.sunriseEnabled = (config.data.flags & nl::FLAG_SUNRISE) != 0;
   p.soundEnabled = (config.data.flags & nl::FLAG_SOUND) != 0;
+  p.soundAccumulate = config.data.soundAccumulate != 0;
   p.timeValid = timeValid;
 
   p.rssi = wifiConnected ? WiFi.RSSI() : 0;
@@ -605,6 +645,11 @@ void onMqttCommand(const String &cmd, const String &value) {
   else if (cmd == "mode_sleep")   setFlag(nl::FLAG_SLEEP, value == "ON");
   else if (cmd == "mode_sunrise") setFlag(nl::FLAG_SUNRISE, value == "ON");
   else if (cmd == "mode_sound")   setFlag(nl::FLAG_SOUND, value == "ON");
+  else if (cmd == "sound_accumulate") {
+    config.data.soundAccumulate = (value == "ON") ? 1 : 0;
+    markConfigDirty();
+    mqtt.publishState(buildMqttPayload());
+  }
   else if (cmd == "manual_brightness") {
     config.data.manualBrightness = (uint8_t)constrain(value.toInt(), 0, 255);
     markConfigDirty();
@@ -660,6 +705,7 @@ void sendConfigState(AsyncWebSocketClient *client) {
   cfg["soundFadeInSec"] = config.data.soundFadeInSec;
   cfg["soundHoldSec"] = config.data.soundHoldSec;
   cfg["soundFadeOutSec"] = config.data.soundFadeOutSec;
+  cfg["soundAccumulate"] = (config.data.soundAccumulate != 0);
 
   cfg["mqttEnabled"] = config.data.mqttEnabled;
   cfg["mqttHost"] = config.data.mqttHost;
@@ -822,6 +868,7 @@ void handleWsMessage(AsyncWebSocketClient *client, const String &msg) {
     config.data.soundFadeInSec = cfg["soundFadeInSec"] | 3;
     config.data.soundHoldSec = cfg["soundHoldSec"] | 120;
     config.data.soundFadeOutSec = cfg["soundFadeOutSec"] | 20;
+    config.data.soundAccumulate = (cfg["soundAccumulate"] | false) ? 1 : 0;
 
     config.data.mqttEnabled = cfg["mqttEnabled"] | false;
     strlcpy(config.data.mqttHost, cfg["mqttHost"] | "", sizeof(config.data.mqttHost));

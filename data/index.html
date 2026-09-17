@@ -405,6 +405,15 @@ input[type=range] { width: 100%; accent-color: var(--primary); margin: 6px 0 2px
     <input type="number" id="cfgSoundHold" min="0" max="3600" value="120">
     <label>Затухание, сек.</label>
     <input type="number" id="cfgSoundFadeOut" min="0" max="3600" value="20">
+    <div class="row" style="margin-top:8px">
+      <span class="label">Суммировать яркость при повторах</span>
+      <label class="switch"><input type="checkbox" id="cfgSoundAccumulate"><span class="slider-sw"></span></label>
+    </div>
+    <div class="hint info">
+      Если шум повторяется, пока отклик ещё идёт, к текущей яркости добавляется
+      ещё одна порция — светильник разгорается ярче прежнего, до 255. Без
+      галочки повтор просто продлевает отклик на прежней яркости.
+    </div>
     <div class="hint info">
       Отклик срабатывает только когда светильник иначе был бы погашен: он не вмешивается
       ни в засыпание, ни в рассвет. Новый шум во время отклика продлевает его с начала.
@@ -599,7 +608,10 @@ function updateSound() {
   if (!state.sound_present) {
     st.innerHTML = '<span class="badge warn">микрофон не отвечает</span>' + win;
   } else if (state.sound_active) {
-    st.innerHTML = '<span class="badge ok">отклик идёт</span>' + win;
+    // Показываем, до какой яркости разгорается текущий отклик: с
+    // накоплением она отличается от настройки, и это стоит видеть
+    const tgt = state.sound_target ? ' до ' + state.sound_target : '';
+    st.innerHTML = '<span class="badge ok">отклик идёт' + tgt + '</span>' + win;
   } else {
     st.innerHTML = '<span class="badge">тишина</span>' + win;
   }
@@ -727,6 +739,7 @@ function updateSettings() {
   document.getElementById('cfgSoundFadeIn').value = c.soundFadeInSec;
   document.getElementById('cfgSoundHold').value = c.soundHoldSec;
   document.getElementById('cfgSoundFadeOut').value = c.soundFadeOutSec;
+  document.getElementById('cfgSoundAccumulate').checked = !!c.soundAccumulate;
 
   document.getElementById('cfgMqttEnabled').checked = !!c.mqttEnabled;
   document.getElementById('cfgMqttHost').value = c.mqttHost || '';
@@ -810,6 +823,7 @@ function collectConfig(errors) {
     soundFadeInSec: num('cfgSoundFadeIn', 'Разгорание', 3, {min: 0, max: 3600}, errors),
     soundHoldSec: num('cfgSoundHold', 'Время горения', 120, {min: 0, max: 3600}, errors),
     soundFadeOutSec: num('cfgSoundFadeOut', 'Затухание', 20, {min: 0, max: 3600}, errors),
+    soundAccumulate: document.getElementById('cfgSoundAccumulate').checked,
 
     mqttEnabled: document.getElementById('cfgMqttEnabled').checked,
     mqttHost: document.getElementById('cfgMqttHost').value,

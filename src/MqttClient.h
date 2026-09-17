@@ -74,6 +74,7 @@ public:
     bool     soundActive;    // отклик на шум идёт прямо сейчас
 
     bool     sleepEnabled, sunriseEnabled, soundEnabled;
+    bool     soundAccumulate;
     bool     timeValid;
 
     int32_t  rssi;
@@ -170,6 +171,8 @@ private:
         nullptr, nullptr, nullptr, "config", "mode_sunrise", nullptr },
       { "switch", "mode_sound", "Реакция на шум", "modes.sound",
         nullptr, nullptr, nullptr, "config", "mode_sound", nullptr },
+      { "switch", "sound_accumulate", "Суммировать яркость отклика", "modes.sound_accum",
+        nullptr, nullptr, nullptr, "config", "sound_accumulate", nullptr },
 
       // Яркость ручного режима отдельной сущностью, а не только
       // ползунком лампы: у выключенной лампы HA отдаёт brightness=None,
@@ -419,6 +422,7 @@ public:
       m["sleep"] = p.sleepEnabled ? "ON" : "OFF";
       m["sunrise"] = p.sunriseEnabled ? "ON" : "OFF";
       m["sound"] = p.soundEnabled ? "ON" : "OFF";
+      m["sound_accum"] = p.soundAccumulate ? "ON" : "OFF";
 
       JsonObject c = doc["cfg"].to<JsonObject>();
       c["manual_brightness"] = p.manualBrightness;
