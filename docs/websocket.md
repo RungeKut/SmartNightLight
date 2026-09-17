@@ -72,7 +72,7 @@ if (!ws.availableForWriteAll()) return;
 {
   "type": "configState",
   "config": {
-    "wifiSSID": "75kV-2G",
+    "wifiSSID": "HomeNet",
     "deviceName": "",
     "defaultDeviceName": "SmartNightLight-B92046",
     "flags": 15,
