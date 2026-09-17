@@ -232,6 +232,27 @@ void setup() {
   }
 
   ArduinoOTA.setHostname(deviceName);
+  ArduinoOTA.onStart([]() {
+    // Образ файловой системы пишется поверх той самой LittleFS, из
+    // которой сейчас отдаётся страница. Не размонтировать её — значит
+    // писать под работающей ФС и получить мусор вместо фронтенда.
+    if (ArduinoOTA.getCommand() == U_FS) {
+      Log.println(F("[OTA] Обновление файловой системы, размонтирую LittleFS"));
+      LittleFS.end();
+    } else {
+      Log.println(F("[OTA] Обновление прошивки"));
+    }
+    // Гасим светильник: во время записи flash цикл не крутится, и
+    // яркость всё равно застыла бы на текущей до перезагрузки.
+    setBrightness(0);
+  });
+  ArduinoOTA.onEnd([]() { Log.println(F("[OTA] Готово, перезагрузка")); });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Log.printf("[OTA] Ошибка %u\n", error);
+    // Файловую систему после неудачного обновления надо вернуть, иначе
+    // до перезагрузки страница отдаваться не будет.
+    LittleFS.begin();
+  });
   ArduinoOTA.begin();
 
   ws.onEvent([](AsyncWebSocket *server, AsyncWebSocketClient *client,
