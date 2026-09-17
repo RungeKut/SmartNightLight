@@ -281,6 +281,11 @@ void loop() {
 
   ArduinoOTA.handle();
   MDNS.update();
+  // Без этого отключившийся клиент остаётся в списке навсегда:
+  // события WS_EVT_DISCONNECT библиотека не выдаёт сама, а
+  // availableForWriteAll() требует свободной очереди у ВСЕХ
+  // клиентов. Один призрак — и телеметрия замолкает для всех.
+  ws.cleanupClients(2);
   WiFiupd();
   updateLocalTime();
   applyNightLight();
