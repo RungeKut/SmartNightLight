@@ -21,6 +21,7 @@
 | — логика светильника (`src/NightLight.h`) | `docs/modules/nightlight.md` |
 | — настройки в EEPROM (`src/ConfigStore.h`) | `docs/modules/config.md` |
 | — WiFi: точка доступа и клиент | `docs/modules/wifi.md` |
+| — кривая яркости и ШИМ (`src/Dimmer.h`) | `docs/modules/dimmer.md` |
 | — микрофон и реакция на шум (`src/SoundSensor.h`) | `docs/modules/sound.md` |
 | — Home Assistant через MQTT (`src/MqttClient.h`) | `docs/modules/mqtt.md` |
 | — подтверждение прошивки (`src/FailsafeOTA.h`) | описано в `docs/build-flash.md` |
