@@ -120,7 +120,7 @@ homeassistant/<тип>/snl<MAC3>/<объект>/config   автодискаве�
 Home Assistant и счётчик воды.
 
 ```bash
-docker exec mosquitto mosquitto_passwd -b /mosquitto/config/passwd     smartnightlight '<пароль>'
+docker exec mosquitto mosquitto_passwd -b /mosquitto/config/passwd smartnightlight '<пароль>'
 docker kill -s HUP mosquitto
 ```
 
