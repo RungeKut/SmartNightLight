@@ -26,14 +26,25 @@ body {
   padding-bottom: 60px;
 }
 .container { max-width: 640px; margin: 0 auto; padding: 0 12px; }
-.header {
-  background: var(--primary);
-  color: #fff;
-  max-width: 640px;
-  margin: 0 auto;
+
+/* Шапка и вкладки прилипают ОДНИМ блоком.
+ *
+ * Раньше у каждого был свой sticky: у шапки top:0, у вкладок top:54px.
+ * 54 — число из воздуха, а настоящая высота шапки зависит от шрифта и
+ * от того, влез ли подзаголовок в одну строку. На деле она около 68px,
+ * и вкладки при прокрутке заезжали под шапку примерно наполовину.
+ * Общий контейнер убирает подгонку: внутри него ничего не липнет, и
+ * высота может быть любой. */
+.topbar {
   position: sticky;
   top: 0;
   z-index: 100;
+  max-width: 640px;
+  margin: 0 auto;
+}
+.header {
+  background: var(--primary);
+  color: #fff;
   box-shadow: 0 2px 8px rgba(0,0,0,.15);
   border-radius: 0 0 8px 8px;
 }
@@ -55,11 +66,6 @@ body {
   display: flex;
   background: var(--card);
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 54px;
-  z-index: 99;
-  max-width: 640px;
-  margin: 0 auto;
 }
 .tab {
   flex: 1;
@@ -195,16 +201,18 @@ input[type=range] { width: 100%; accent-color: var(--primary); margin: 6px 0 2px
 </head>
 <body>
 
-<div class="header">
-  <div class="inner">
-    <h1>SmartNightLight <span id="apBadge" class="badge-ap hidden">AP</span></h1>
-    <div class="sub" id="headerSub">Подключение...</div>
+<div class="topbar">
+  <div class="header">
+    <div class="inner">
+      <h1>SmartNightLight <span id="apBadge" class="badge-ap hidden">AP</span></h1>
+      <div class="sub" id="headerSub">Подключение...</div>
+    </div>
   </div>
-</div>
 
-<div class="tabs">
-  <div class="tab active" data-tab="dashboard">Светильник</div>
-  <div class="tab" data-tab="settings">Настройки</div>
+  <div class="tabs">
+    <div class="tab active" data-tab="dashboard">Светильник</div>
+    <div class="tab" data-tab="settings">Настройки</div>
+  </div>
 </div>
 
 <div class="container">
@@ -303,6 +311,20 @@ input[type=range] { width: 100%; accent-color: var(--primary); margin: 6px 0 2px
     <div class="hint info" id="nameHint">Латиница, цифры и дефис. Пустое — имя по MAC-адресу. Используется как hostname, mDNS-адрес и SSID точки доступа.</div>
     <label style="margin-top:10px">Часовой пояс, минут от UTC</label>
     <input type="number" id="cfgTz" min="-720" max="840" step="30" value="180">
+  </div>
+
+  <div class="card">
+    <div class="section-title">Кривая яркости</div>
+    <label>Гамма: <span id="cfgGammaLabel">2.2</span></label>
+    <input type="range" id="cfgGamma" min="10" max="30" step="1" value="22"
+           oninput="document.getElementById('cfgGammaLabel').textContent = (this.value/10).toFixed(1)">
+    <div class="hint info">
+      Глаз воспринимает свет примерно как корень из мощности, поэтому при
+      линейном ШИМ низ ползунка скачет, а верх почти не меняется. Гамма это
+      компенсирует: 1.0 — линейно, как было раньше; 2.2 — обычное значение;
+      больше — сильнее растянут низ шкалы. Подбирается на глаз, применяется
+      сразу после сохранения.
+    </div>
   </div>
 
   <div class="card">
@@ -488,7 +510,11 @@ function updateDashboard() {
 
   const b = state.brightness || 0;
   document.getElementById('lampValue').textContent = Math.round(b / 255 * 100) + '%';
-  document.getElementById('lampMode').textContent = modeLabel(state.mode) + ' · ' + b + '/255';
+  // Рядом с яркостью показываем скважность: иначе непонятно, почему
+  // «40 из 255» светит совсем не как 16% накала
+  const duty = state.duty !== undefined ? ' · ШИМ ' + state.duty : '';
+  document.getElementById('lampMode').textContent =
+    modeLabel(state.mode) + ' · ' + b + '/255' + duty;
   const glow = document.getElementById('lampGlow');
   // Воспринимаемая яркость нелинейна: без корня слабое свечение
   // на экране выглядит темнее, чем светильник в комнате.
@@ -659,6 +685,10 @@ function updateSettings() {
   document.getElementById('cfgDeviceName').value = c.deviceName || '';
   document.getElementById('cfgDeviceName').placeholder = c.defaultDeviceName || '';
   document.getElementById('cfgTz').value = c.tzOffsetMinutes;
+  if (c.pwmGammaX10 !== undefined) {
+    document.getElementById('cfgGamma').value = c.pwmGammaX10;
+    document.getElementById('cfgGammaLabel').textContent = (c.pwmGammaX10 / 10).toFixed(1);
+  }
 
   const f = c.flags || 0;
   document.getElementById('cfgSleepEnabled').checked = !!(f & 0x01);
@@ -747,6 +777,7 @@ function collectConfig(errors) {
     wifiPass: document.getElementById('cfgPass').value,
     deviceName: document.getElementById('cfgDeviceName').value,
     tzOffsetMinutes: num('cfgTz', 'Часовой пояс', 180, {min: -720, max: 840}, errors),
+    pwmGammaX10: parseInt(document.getElementById('cfgGamma').value, 10),
     flags: flags,
     manualBrightness: parseInt(document.getElementById('manualBrightness').value, 10),
     sleepTime: inputToHhmm('cfgSleepTime', errors, 'Время отхода ко сну'),

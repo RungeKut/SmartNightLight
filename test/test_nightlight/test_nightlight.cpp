@@ -141,6 +141,72 @@ void test_sleep_interval_over_midnight() {
   TEST_ASSERT_EQUAL(MODE_OFF, compute(s, 31, false, true).mode);
 }
 
+// Граница полуночи по минутам: в старой версии интервал строился
+// арифметикой над hhmm, и переход через 00:00 был отдельной веткой с
+// обрезкой часов. Здесь всё сводится к разности по модулю суток,
+// поэтому полночь ничем не примечательна — но проверить стоит именно
+// её, минута за минутой.
+void test_sleep_crosses_midnight_minute_by_minute() {
+  Settings s = defaults();
+  s.flags = FLAG_SLEEP | FLAG_DIM;
+  s.sleepTime = 2350;
+  s.sleepLength = 30;          // интервал 23:50 -> 00:20
+
+  TEST_ASSERT_EQUAL(MODE_OFF,  compute(s, 2349, false, true).mode);
+  TEST_ASSERT_EQUAL(MODE_DIM,  compute(s, 2355, false, true).mode);
+  TEST_ASSERT_EQUAL(MODE_DIM,  compute(s, 2359, false, true).mode);
+  TEST_ASSERT_EQUAL(MODE_DIM,  compute(s,    0, false, true).mode);  // 00:00
+  TEST_ASSERT_EQUAL(MODE_DIM,  compute(s,    1, false, true).mode);
+  TEST_ASSERT_EQUAL(MODE_DIM,  compute(s,   20, false, true).mode);
+  TEST_ASSERT_EQUAL(MODE_OFF,  compute(s,   21, false, true).mode);
+}
+
+// Яркость через полночь тоже должна падать монотонно, без скачка
+// вверх в 00:00
+void test_dim_does_not_jump_at_midnight() {
+  Settings s = defaults();
+  s.flags = FLAG_SLEEP | FLAG_DIM;
+  s.sleepTime = 2350;
+  s.sleepLength = 30;
+  s.signalBrightness = 200;
+
+  uint16_t times[] = {2355, 2358, 2359, 0, 1, 5, 10, 20};
+  uint8_t prev = 255;
+  for (unsigned i = 0; i < sizeof(times) / sizeof(times[0]); i++) {
+    uint8_t b = compute(s, times[i], false, true).brightness;
+    TEST_ASSERT_TRUE_MESSAGE(b <= prev, "яркость выросла посреди затухания");
+    prev = b;
+  }
+  TEST_ASSERT_EQUAL_UINT8((uint8_t)MIN_BRIGHTNESS, prev);
+}
+
+// Вспышки "пора спать" тоже могут начаться перед самой полуночью
+void test_signal_crosses_midnight() {
+  Settings s = defaults();
+  s.flags = FLAG_SLEEP | FLAG_SIGNAL;
+  s.sleepTime = 2358;
+  s.sleepLength = 60;
+
+  TEST_ASSERT_EQUAL(MODE_SIGNAL, compute(s, 2358, false, true).mode);
+  TEST_ASSERT_EQUAL(MODE_SIGNAL, compute(s, 2359, false, true).mode);
+  TEST_ASSERT_EQUAL(MODE_SIGNAL, compute(s,    0, false, true).mode);
+  TEST_ASSERT_EQUAL(MODE_SIGNAL, compute(s,    2, false, true).mode);
+  TEST_ASSERT_NOT_EQUAL(MODE_SIGNAL, compute(s, 3, false, true).mode);
+}
+
+// Предельная длительность: uint8_t даёт максимум 255 минут, и такой
+// интервал тоже обязан пережить полночь
+void test_longest_sleep_interval_over_midnight() {
+  Settings s = defaults();
+  s.flags = FLAG_SLEEP | FLAG_DIM;
+  s.sleepTime = 2300;
+  s.sleepLength = 255;         // 23:00 -> 03:15
+
+  TEST_ASSERT_EQUAL(MODE_DIM, compute(s,    0, false, true).mode);
+  TEST_ASSERT_EQUAL(MODE_DIM, compute(s,  315, false, true).mode);
+  TEST_ASSERT_EQUAL(MODE_OFF, compute(s,  316, false, true).mode);
+}
+
 // Без затухания режим сна держит обычную яркость
 void test_sleep_without_dim_holds_brightness() {
   Settings s = defaults();
@@ -367,6 +433,10 @@ int main(int, char **) {
   RUN_TEST(test_dim_falls_from_full_to_minimum);
   RUN_TEST(test_sleep_interval_ends);
   RUN_TEST(test_sleep_interval_over_midnight);
+  RUN_TEST(test_sleep_crosses_midnight_minute_by_minute);
+  RUN_TEST(test_dim_does_not_jump_at_midnight);
+  RUN_TEST(test_signal_crosses_midnight);
+  RUN_TEST(test_longest_sleep_interval_over_midnight);
   RUN_TEST(test_sleep_without_dim_holds_brightness);
   RUN_TEST(test_sunrise_grows_to_maximum);
   RUN_TEST(test_sunrise_holds_configured_maximum_after_ramp);

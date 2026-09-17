@@ -26,6 +26,7 @@
 #include <EEPROM.h>
 #include "Log.h"
 #include "NightLight.h"
+#include "Dimmer.h"
 
 #define EEPROM_MAGIC 0x4E4C   // 'NL'
 
@@ -78,6 +79,10 @@ struct ConfigData {
   char     mqttUser[32];
   char     mqttPass[32];
   uint16_t mqttIntervalSec;    // период публикации, 0 = по умолчанию
+
+  // ====== Добавлено В КОНЕЦ: гамма ШИМ ======
+  // Хранится умноженной на 10: 22 = 2.2. См. src/Dimmer.h.
+  uint8_t  pwmGammaX10;
 };
 
 class ConfigStore {
@@ -128,6 +133,7 @@ public:
     data.tzOffsetMinutes = 180;     // GMT+3, Москва
     setSoundDefaults();
     setMqttDefaults();
+    data.pwmGammaX10 = GAMMA_X10_DEFAULT;
   }
 
   void setSoundDefaults() {
@@ -211,6 +217,11 @@ private:
       terminate(data.mqttUser, sizeof(data.mqttUser));
       terminate(data.mqttPass, sizeof(data.mqttPass));
       if (data.mqttIntervalSec > 3600) data.mqttIntervalSec = 0;
+    }
+
+    // 0xFF из нетронутой flash выходит за диапазон и сам себя выдаёт
+    if (data.pwmGammaX10 < GAMMA_X10_MIN || data.pwmGammaX10 > GAMMA_X10_MAX) {
+      data.pwmGammaX10 = GAMMA_X10_DEFAULT;
     }
   }
 

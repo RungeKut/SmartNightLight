@@ -22,6 +22,7 @@
 #include "ConfigStore.h"
 #include "WsRxBuffer.h"
 #include "SoundSensor.h"
+#include "Dimmer.h"
 #include "MqttClient.h"
 #include "FailsafeOTA.h"
 
@@ -31,7 +32,7 @@
 // не должен сажать его к земле.
 #define LED_PIN 0
 #define PWM_FREQ_HZ 1000
-#define PWM_BITS 8
+// Разрядность и кривая яркости живут в Dimmer.h
 
 // Префикс имени устройства и SSID точки доступа
 #define AP_SSID_PREFIX "SmartNightLight"
@@ -53,6 +54,7 @@ AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 WsRxBuffer wsRx;
 SoundSensor sound;
+Dimmer dimmer;
 MqttClient mqtt;
 FailsafeOTA failsafe;
 
@@ -127,9 +129,11 @@ void onMqttCommand(const String &cmd, const String &value);
 MqttClient::Payload buildMqttPayload();
 
 // ==================== Светодиод ====================
+// Наружу вся прошивка оперирует яркостью 0..255; в ШИМ уходит
+// скважность 0..1023 по гамма-кривой, см. Dimmer.h.
 void setBrightness(uint8_t value) {
   if (lastWritten == value) return;
-  analogWrite(LED_PIN, value);
+  analogWrite(LED_PIN, dimmer.duty(value));
   lastWritten = value;
 }
 
@@ -255,7 +259,7 @@ void setup() {
 
   pinMode(LED_PIN, OUTPUT);
   analogWriteFreq(PWM_FREQ_HZ);
-  analogWriteResolution(PWM_BITS);   // иначе диапазон PWM 0..1023
+  analogWriteResolution(PWM_BITS);
   setBrightness(0);
 
   WiFi.macAddress(deviceMac);
@@ -264,6 +268,7 @@ void setup() {
 
   config.begin();
   applyDeviceName();
+  dimmer.setGamma(config.data.pwmGammaX10);
 
   Log.printf("\n\n=== %s ===\n", deviceName);
   Log.printf("[Boot] Причина сброса: %s\n", ESP.getResetReason().c_str());
@@ -496,6 +501,9 @@ void fillSystemState(JsonDocument &doc) {
 
   doc["manual_on"] = manualOn;
   doc["brightness"] = currentBrightness;
+  // Скважность видна рядом с яркостью: без неё непонятно, почему
+  // «яркость 40» выглядит совсем не как 40 из 255
+  doc["duty"] = dimmer.duty(currentBrightness);
   doc["mode"] = nl::modeName(currentMode);
 
   // Уровень и пик нужны, чтобы подобрать порог: в интерфейсе видно,
@@ -612,6 +620,8 @@ void sendConfigState(AsyncWebSocketClient *client) {
   cfg["sunriseBrightness"] = config.data.sunriseBrightness;
   cfg["tzOffsetMinutes"] = config.data.tzOffsetMinutes;
   cfg["signalMinutes"] = nl::SIGNAL_MINUTES;
+  cfg["pwmGammaX10"] = config.data.pwmGammaX10;
+  cfg["pwmMaxDuty"] = PWM_MAX_DUTY;
 
   cfg["soundStart"] = config.data.soundStart;
   cfg["soundEnd"] = config.data.soundEnd;
@@ -773,6 +783,7 @@ void handleWsMessage(AsyncWebSocketClient *client, const String &msg) {
     config.data.sunLength = cfg["sunLength"] | 30;
     config.data.sunriseBrightness = cfg["sunriseBrightness"] | 255;
     config.data.tzOffsetMinutes = cfg["tzOffsetMinutes"] | 180;
+    config.data.pwmGammaX10 = cfg["pwmGammaX10"] | GAMMA_X10_DEFAULT;
 
     config.data.soundStart = cfg["soundStart"] | 2300;
     config.data.soundEnd = cfg["soundEnd"] | 600;
@@ -794,6 +805,10 @@ void handleWsMessage(AsyncWebSocketClient *client, const String &msg) {
     timeClient.setTimeOffset(config.data.tzOffsetMinutes * 60);
     // Смена брокера подхватывается на лету, перезагрузка не нужна
     mqtt.applyConfig();
+    // Новая кривая должна лечь на светодиод сразу, а не после
+    // следующей смены яркости
+    dimmer.setGamma(config.data.pwmGammaX10);
+    lastWritten = 0xFFFF;
 
     bool wifiChanged = strcmp(prevSSID, config.data.wifiSSID) != 0
                     || strcmp(prevPass, config.data.wifiPass) != 0
