@@ -75,7 +75,7 @@ python ~/.platformio/packages/framework-arduinoespressif8266/tools/espota.py \
 По воздуху заливается и фронтенд — флаг `-s` шлёт образ LittleFS:
 
 ```bash
-python .../espota.py -i SmartNightLight-B92046.local -s   -f .pio/build/d1_mini/littlefs.bin -r
+python .../espota.py -i SmartNightLight-B92046.local -s -f .pio/build/d1_mini/littlefs.bin -r
 ```
 
 Удобнее шить по mDNS-имени, а не по IP: адрес выдаёт DHCP и он может
