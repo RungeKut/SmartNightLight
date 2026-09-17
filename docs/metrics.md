@@ -23,7 +23,9 @@ scrape_configs:
 |---------|-----|-------|
 | `smartnightlight_sound_level` | gauge | мгновенный размах в момент опроса |
 | `smartnightlight_sound_peak` | gauge | максимум за последние 60 секунд |
-| `smartnightlight_sound_triggers_total` | counter | превышений порога |
+| `smartnightlight_sound_triggers_total{window="inside"}` | counter | события в ночном окне |
+| `smartnightlight_sound_triggers_total{window="outside"}` | counter | события вне окна |
+| `smartnightlight_sound_window_active` | gauge | 1 = ночное окно действует сейчас |
 | `smartnightlight_sound_sensor_present` | gauge | 1 = микрофон отвечает |
 
 **График стройте по `sound_peak`, а не по `sound_level`.** Prometheus
@@ -35,8 +37,21 @@ scrape_configs:
 Сколько раз ребёнок вставал за ночь:
 
 ```promql
-increase(smartnightlight_sound_triggers_total[8h])
+increase(smartnightlight_sound_triggers_total{window="inside"}[8h])
 ```
+
+Дневная активность в комнате — тот же запрос с `window="outside"`, а сумма
+получается без указания метки вовсе:
+
+```promql
+sum(increase(smartnightlight_sound_triggers_total[24h]))
+```
+
+Метка, а не две отдельные метрики, именно ради этого: периоды и разделяются,
+и складываются одним выражением.
+
+`sound_window_active` полезно наложить на график фоном — видно, когда окно
+вообще действовало, и не приходится держать расписание в голове.
 
 Счётчик считает события, а не измерения: пока отклик идёт, повторный
 шум его только продлевает. Подробности — в `docs/modules/sound.md`.

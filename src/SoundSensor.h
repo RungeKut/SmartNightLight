@@ -64,12 +64,13 @@ private:
   uint8_t  _bucket;
   uint32_t _lastBucketMs;
   uint32_t _lastSampleMs;
-  uint32_t _triggers;     // сколько раз порог был превышен
+  uint32_t _triggers;     // событий внутри ночного окна
+  uint32_t _triggersOut;  // событий за его пределами
 
 public:
   SoundSensor()
     : _pin(A0), _level(0), _peakWindow(0), _bucket(0),
-      _lastBucketMs(0), _lastSampleMs(0), _triggers(0) {
+      _lastBucketMs(0), _lastSampleMs(0), _triggers(0), _triggersOut(0) {
     for (uint8_t i = 0; i < SOUND_PEAK_BUCKETS; i++) _buckets[i] = 0;
   }
 
@@ -111,11 +112,18 @@ public:
     return threshold > 0 && _level >= threshold;
   }
 
-  void countTrigger() { _triggers++; }
+  // Два счётчика, а не один: ночная активность и дневная — разные
+  // величины. Смешивать их означало бы потерять и ту и другую, потому
+  // что днём шум в детской стоит почти постоянно.
+  void countTrigger(bool insideWindow) {
+    if (insideWindow) _triggers++;
+    else _triggersOut++;
+  }
 
   uint16_t level() const { return _level; }
   uint16_t peak() const { return _peakWindow; }
   uint32_t triggers() const { return _triggers; }
+  uint32_t triggersOutside() const { return _triggersOut; }
 
   // Оценка по текущему пику, а не по факту "когда-либо был сигнал":
   // отвалившийся провод так виден сразу, а не до перезагрузки.

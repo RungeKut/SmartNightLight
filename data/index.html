@@ -179,6 +179,12 @@ input[type=range] { width: 100%; accent-color: var(--primary); margin: 6px 0 2px
   font-size: 12px; font-weight: 600; color: var(--text-secondary);
   text-transform: uppercase; letter-spacing: .5px; margin: 16px 0 8px;
 }
+.chip {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 8px; margin-left: 6px;
+  background: rgba(94,53,177,.15); color: var(--primary);
+  vertical-align: middle;
+}
 .field-error { border-color: var(--red) !important; }
 .errors { margin-bottom: 8px; }
 .toast {
@@ -261,9 +267,13 @@ input[type=range] { width: 100%; accent-color: var(--primary); margin: 6px 0 2px
     </div>
     <div class="meter-legend"><span>0</span><span id="soundThresholdLabel">порог --</span><span>1023</span></div>
     <div class="row"><span class="label">Пик за минуту</span><span id="soundPeak">--</span></div>
-    <div class="row"><span class="label">Срабатываний</span><span id="soundTriggers">--</span></div>
+    <div class="row"><span class="label">Событий в ночном окне</span><span id="soundTriggers">--</span></div>
+    <div class="row"><span class="label">Событий вне окна</span><span id="soundTriggersOut">--</span></div>
     <div class="row"><span class="label">Состояние</span><span id="soundState">--</span></div>
     <div id="soundHint" class="hint info">
+      Счётчики считают события, а не измерения: шум, отделённый от предыдущего
+      паузой в 30 секунд. Оба идут круглосуточно — окно решает лишь, в какой из
+      них попадёт событие и зажигать ли свет.
       Красная риска — порог. Подбирайте так: в тишине полоса не должна доходить до риски,
       а шаги по комнате — должны. Грубая настройка — подстроечным резистором на модуле.
     </div>
@@ -579,14 +589,19 @@ function updateSound() {
     ? state.sound_peak : '--';
   document.getElementById('soundTriggers').textContent = state.sound_triggers !== undefined
     ? state.sound_triggers : '--';
+  document.getElementById('soundTriggersOut').textContent = state.sound_triggers_out !== undefined
+    ? state.sound_triggers_out : '--';
 
   const st = document.getElementById('soundState');
+  // Показываем и то, действует ли сейчас ночное окно: без этого
+  // непонятно, в какой из двух счётчиков попадёт следующее событие
+  const win = state.sound_in_window ? ' <span class="chip">ночное окно</span>' : '';
   if (!state.sound_present) {
-    st.innerHTML = '<span class="badge warn">микрофон не отвечает</span>';
+    st.innerHTML = '<span class="badge warn">микрофон не отвечает</span>' + win;
   } else if (state.sound_active) {
-    st.innerHTML = '<span class="badge ok">отклик идёт</span>';
+    st.innerHTML = '<span class="badge ok">отклик идёт</span>' + win;
   } else {
-    st.innerHTML = '<span class="badge">тишина</span>';
+    st.innerHTML = '<span class="badge">тишина</span>' + win;
   }
 }
 

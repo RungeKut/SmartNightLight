@@ -87,6 +87,14 @@ bool manualOn = false;
 uint32_t soundTriggerMs = 0;
 bool soundActive = false;
 
+// Отдельный таймер для СЧЁТА событий. Он живёт своей жизнью, потому что
+// считать надо круглосуточно, а светом отклик управляет только в окне.
+uint32_t soundEventMs = 0;
+bool soundEventActive = false;
+// Пауза, после которой шум считается новым событием. Без неё счётчик
+// рос бы десять раз в секунду, пока в комнате разговаривают.
+#define SOUND_EVENT_GAP_SEC 30
+
 uint8_t currentBrightness = 0;
 nl::Mode currentMode = nl::MODE_OFF;
 uint16_t lastWritten = 0xFFFF;   // заведомо отличается от любой яркости
@@ -188,26 +196,36 @@ void updateLocalTime() {
 }
 
 // ==================== Микрофон ====================
-// Детектор работает всё ночное окно, даже когда светильник занят
-// другим режимом: срабатывания нужны для графика ночной активности,
-// а зажигать свет или нет — решает уже nl::compute().
+// Измерение и счёт событий идут круглосуточно; ночное окно и флаг
+// режима решают только одно — зажигать ли свет.
 void updateSound(uint32_t now) {
   if (!sound.tick(now)) return;
 
   nl::Settings s = config.toSettings();
   bool inWindow = timeValid
                && nl::insideWindow(s.soundStart, s.soundEnd, nowHhmm);
+  bool loud = sound.exceeded(config.data.soundThreshold);
 
-  if ((config.data.flags & nl::FLAG_SOUND) && inWindow
-      && sound.exceeded(config.data.soundThreshold)) {
-    // Новый шум во время отклика продлевает его с начала: ребёнок,
-    // который ходит по комнате, не должен остаться в темноте на
-    // середине затухания.
-    if (!soundActive) sound.countTrigger();   // считаем события, а не измерения
-    soundTriggerMs = now;
-    soundActive = true;
+  if (loud) {
+    // Событие — это шум, отделённый от предыдущего паузой. Считаем
+    // одинаково днём и ночью, иначе счётчики было бы не сравнить.
+    if (!soundEventActive) sound.countTrigger(inWindow);
+    soundEventMs = now;
+    soundEventActive = true;
+
+    // А вот свет — только в окне и только если режим включён
+    if ((config.data.flags & nl::FLAG_SOUND) && inWindow) {
+      // Новый шум во время отклика продлевает его с начала: ребёнок,
+      // который ходит по комнате, не должен остаться в темноте на
+      // середине затухания.
+      soundTriggerMs = now;
+      soundActive = true;
+    }
   }
 
+  if (soundEventActive && (now - soundEventMs) / 1000 > SOUND_EVENT_GAP_SEC) {
+    soundEventActive = false;
+  }
   if (soundActive && (now - soundTriggerMs) / 1000 > nl::soundTotalSec(s)) {
     soundActive = false;
   }
@@ -511,6 +529,9 @@ void fillSystemState(JsonDocument &doc) {
   doc["sound_level"] = sound.level();
   doc["sound_peak"] = sound.peak();
   doc["sound_triggers"] = sound.triggers();
+  doc["sound_triggers_out"] = sound.triggersOutside();
+  doc["sound_in_window"] = timeValid && nl::insideWindow(
+      config.data.soundStart, config.data.soundEnd, nowHhmm);
   doc["sound_present"] = sound.present();
   doc["sound_active"] = soundActive;
 
@@ -539,6 +560,7 @@ MqttClient::Payload buildMqttPayload() {
   p.soundLevel = sound.level();
   p.soundPeak = sound.peak();
   p.soundTriggers = sound.triggers();
+  p.soundTriggersOut = sound.triggersOutside();
   p.soundActive = soundActive;
 
   p.sleepEnabled = (config.data.flags & nl::FLAG_SLEEP) != 0;
@@ -908,10 +930,23 @@ void setupHttpRoutes() {
 
     // Срабатывания монотонно растут — counter, чтобы работали rate()
     // и increase(): «сколько раз ребёнок вставал за ночь»
-    body += F("# HELP smartnightlight_sound_triggers_total Sound threshold crossings\n");
+    // Один counter с меткой, а не две разные метрики: так в запросе
+    // можно и разделить периоды, и сложить их без перечисления имён.
+    body += F("# HELP smartnightlight_sound_triggers_total Sound events, split by night window\n");
     body += F("# TYPE smartnightlight_sound_triggers_total counter\n");
-    body += F("smartnightlight_sound_triggers_total ");
+    body += F("smartnightlight_sound_triggers_total{window=\"inside\"} ");
     body += String(sound.triggers());
+    body += F("\n");
+    body += F("smartnightlight_sound_triggers_total{window=\"outside\"} ");
+    body += String(sound.triggersOutside());
+    body += F("\n");
+
+    // Чтобы на графике было видно, когда окно вообще действовало
+    body += F("# HELP smartnightlight_sound_window_active Night window is in effect now\n");
+    body += F("# TYPE smartnightlight_sound_window_active gauge\n");
+    body += F("smartnightlight_sound_window_active ");
+    body += String((timeValid && nl::insideWindow(config.data.soundStart,
+                                                  config.data.soundEnd, nowHhmm)) ? 1 : 0);
     body += F("\n");
 
     // Микрофон, отдающий ровно ноль, не отличить от идеальной тишины

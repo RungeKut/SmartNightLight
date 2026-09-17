@@ -69,7 +69,8 @@ public:
 
     uint16_t soundLevel;     // текущий размах с микрофона
     uint16_t soundPeak;      // пик за последнюю минуту
-    uint32_t soundTriggers;
+    uint32_t soundTriggers;     // событий внутри ночного окна
+    uint32_t soundTriggersOut;  // событий за его пределами
     bool     soundActive;    // отклик на шум идёт прямо сейчас
 
     bool     sleepEnabled, sunriseEnabled, soundEnabled;
@@ -153,7 +154,9 @@ private:
       // независимо от ночного окна и от того, включён ли режим.
       { "sensor", "sound_peak", "Пик шума за минуту", "sound.peak",
         nullptr, "measurement", nullptr, nullptr, nullptr, nullptr },
-      { "sensor", "sound_triggers", "Срабатываний по шуму", "sound.triggers",
+      { "sensor", "sound_triggers", "Шум в ночном окне", "sound.triggers",
+        nullptr, "total_increasing", nullptr, nullptr, nullptr, nullptr },
+      { "sensor", "sound_triggers_out", "Шум вне ночного окна", "sound.triggers_out",
         nullptr, "total_increasing", nullptr, nullptr, nullptr, nullptr },
       // device_class sound: в HA такая сущность читается как
       // "обнаружен звук" и годится в триггер автоматизации
@@ -409,6 +412,7 @@ public:
       s["level"] = p.soundLevel;
       s["peak"] = p.soundPeak;
       s["triggers"] = p.soundTriggers;
+      s["triggers_out"] = p.soundTriggersOut;
       s["active"] = p.soundActive ? "ON" : "OFF";
 
       JsonObject m = doc["modes"].to<JsonObject>();
