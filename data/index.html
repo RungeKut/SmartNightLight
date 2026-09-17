@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SmartNightLight</title>
+<style>
+:root {
+  --primary: #5E35B1;
+  --primary-dark: #4527A0;
+  --bg: #f5f5f5;
+  --card: #fff;
+  --text: #212121;
+  --text-secondary: #757575;
+  --border: #e0e0e0;
+  --green: #43A047;
+  --red: #E53935;
+  --orange: #FB8C00;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding-bottom: 60px;
+}
+.container { max-width: 640px; margin: 0 auto; padding: 0 12px; }
+.header {
+  background: var(--primary);
+  color: #fff;
+  max-width: 640px;
+  margin: 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15);
+  border-radius: 0 0 8px 8px;
+}
+.header .inner { padding: 16px 12px; text-align: center; }
+.header h1 { font-size: 18px; font-weight: 500; }
+.header .sub { font-size: 12px; opacity: .8; }
+.header .badge-ap {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  background: #FF8F00;
+  color: #fff;
+  border-radius: 3px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.tabs {
+  display: flex;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 54px;
+  z-index: 99;
+  max-width: 640px;
+  margin: 0 auto;
+}
+.tab {
+  flex: 1;
+  text-align: center;
+  padding: 12px 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all .2s;
+  -webkit-tap-highlight-color: transparent;
+}
+.tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+.tab-content { display: none; padding: 12px; }
+.tab-content.active { display: block; }
+.card {
+  background: var(--card);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.card h3 { font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; font-weight: 500; }
+.row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+.row .label { font-size: 14px; color: var(--text-secondary); }
+.row .value { font-size: 16px; font-weight: 600; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+.badge.ok { background: #E8F5E9; color: var(--green); }
+.badge.err { background: #FFEBEE; color: var(--red); }
+.badge.warn { background: #FFF3E0; color: var(--orange); }
+
+/* Крупный показ текущей яркости */
+.lamp { text-align: center; padding: 8px 0 4px; }
+.lamp .glow {
+  width: 108px; height: 108px;
+  margin: 0 auto 10px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #FFE082 0%, #FFB300 65%, #FF8F00 100%);
+  transition: opacity .35s ease, box-shadow .35s ease;
+}
+.lamp .val { font-size: 34px; font-weight: 700; color: var(--primary); line-height: 1; }
+.lamp .sub { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+input[type=text], input[type=password], input[type=time], input[type=number], select {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 14px; margin-bottom: 8px; background: #fff; color: var(--text);
+}
+input:focus, select:focus { outline: none; border-color: var(--primary); }
+label { font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 2px; }
+input[type=range] { width: 100%; accent-color: var(--primary); margin: 6px 0 2px; }
+
+/* Переключатель */
+.switch { position: relative; display: inline-block; width: 44px; height: 24px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider-sw {
+  position: absolute; cursor: pointer; inset: 0;
+  background: #bdbdbd; transition: .2s; border-radius: 24px;
+}
+.slider-sw:before {
+  position: absolute; content: ""; height: 18px; width: 18px;
+  left: 3px; bottom: 3px; background: #fff; transition: .2s; border-radius: 50%;
+}
+.switch input:checked + .slider-sw { background: var(--primary); }
+.switch input:checked + .slider-sw:before { transform: translateX(20px); }
+
+.btn {
+  display: inline-block; padding: 10px 20px; border-radius: 8px;
+  font-size: 14px; font-weight: 500; border: none; cursor: pointer;
+  transition: opacity .2s; margin: 4px 0; width: 100%; text-align: center;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn:active { opacity: .7; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.hidden { display: none !important; }
+.hint { font-size: 12px; line-height: 1.5; padding: 8px 10px; border-radius: 8px; margin-top: 4px; }
+.hint.info { background: rgba(94,53,177,.1); color: var(--primary); }
+.hint.warn { background: #FFF3E0; color: #E65100; }
+.section-title {
+  font-size: 12px; font-weight: 600; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: .5px; margin: 16px 0 8px;
+}
+.field-error { border-color: var(--red) !important; }
+.errors { margin-bottom: 8px; }
+.toast {
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+  background: #323232; color: #fff; padding: 12px 24px; border-radius: 8px;
+  font-size: 14px; z-index: 999; opacity: 0; transition: opacity .3s;
+  pointer-events: none; max-width: 90vw; text-align: center;
+}
+.toast.show { opacity: 1; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; --text-secondary: #9e9e9e; --border: #333; }
+  input[type=text], input[type=password], input[type=time], input[type=number], select {
+    background: #2a2a2a; color: #e0e0e0;
+  }
+  .badge.ok { background: rgba(67,160,71,.18); }
+  .badge.err { background: rgba(229,57,53,.18); }
+  .badge.warn { background: rgba(251,140,0,.18); }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="inner">
+    <h1>SmartNightLight <span id="apBadge" class="badge-ap hidden">AP</span></h1>
+    <div class="sub" id="headerSub">Подключение...</div>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="dashboard">Светильник</div>
+  <div class="tab" data-tab="settings">Настройки</div>
+</div>
+
+<div class="container">
+
+<!-- ======== DASHBOARD ======== -->
+<div id="tab-dashboard" class="tab-content active">
+
+  <div class="card">
+    <div class="lamp">
+      <div class="glow" id="lampGlow" style="opacity:0"></div>
+      <div class="val" id="lampValue">--</div>
+      <div class="sub" id="lampMode">--</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Ручное управление</h3>
+    <div class="row">
+      <span class="label">Включить</span>
+      <label class="switch">
+        <input type="checkbox" id="manualOn" onchange="sendManual()">
+        <span class="slider-sw"></span>
+      </label>
+    </div>
+    <label>Яркость: <span id="manualBrightnessLabel">--</span></label>
+    <input type="range" id="manualBrightness" min="0" max="255" value="160"
+           oninput="onBrightnessInput()" onchange="sendManual()">
+    <div class="hint info">Ручное включение действует до перезагрузки — потом светильник снова живёт по расписанию.</div>
+  </div>
+
+  <div class="card">
+    <h3>Время</h3>
+    <div class="row"><span class="label">Сейчас</span><span class="value" id="sysTime">--</span></div>
+    <div class="row"><span class="label">Дата</span><span class="value" id="sysDate">--</span></div>
+    <div id="timeWarn" class="hint warn hidden">
+      Время не синхронизировано с NTP. Пока его нет, расписание не работает — доступно только ручное включение.
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Система</h3>
+    <div class="row"><span class="label">WiFi</span><span id="sysWiFi">--</span></div>
+    <div class="row"><span class="label">Уровень сигнала</span><span id="sysRSSI">--</span></div>
+    <div class="row"><span class="label" id="sysIPLabel">IP-адрес</span><span id="sysIP">--</span></div>
+    <div class="row"><span class="label">Имя устройства</span><span id="sysName">--</span></div>
+    <div class="row"><span class="label">Аптайм</span><span id="sysUptime">--</span></div>
+    <div class="row"><span class="label">Свободная память</span><span id="sysHeap">--</span></div>
+  </div>
+
+</div>
+
+<!-- ======== SETTINGS ======== -->
+<div id="tab-settings" class="tab-content">
+
+  <div id="apHint" class="hint warn hidden" style="margin-bottom:12px">
+    Устройство раздаёт свою точку доступа: домашняя сеть недоступна или ещё не настроена.
+    Введите SSID и пароль, сохраните — светильник перезагрузится и подключится к ней.
+  </div>
+
+  <div id="settingsErrors" class="errors"></div>
+
+  <div class="card">
+    <div class="section-title">WiFi</div>
+    <label>SSID домашней сети</label>
+    <input type="text" id="cfgSSID" placeholder="Имя сети" autocomplete="off">
+    <label>Пароль</label>
+    <input type="password" id="cfgPass" placeholder="Оставьте пустым, чтобы не менять" autocomplete="new-password">
+    <label>Имя устройства</label>
+    <input type="text" id="cfgDeviceName" placeholder="" autocomplete="off">
+    <div class="hint info" id="nameHint">Латиница, цифры и дефис. Пустое — имя по MAC-адресу. Используется как hostname, mDNS-адрес и SSID точки доступа.</div>
+    <label style="margin-top:10px">Часовой пояс, минут от UTC</label>
+    <input type="number" id="cfgTz" min="-720" max="840" step="30" value="180">
+  </div>
+
+  <div class="card">
+    <div class="section-title">Отход ко сну</div>
+    <div class="row">
+      <span class="label">Включить режим</span>
+      <label class="switch"><input type="checkbox" id="cfgSleepEnabled"><span class="slider-sw"></span></label>
+    </div>
+    <label style="margin-top:8px">Время отхода ко сну</label>
+    <input type="time" id="cfgSleepTime" value="22:00">
+    <label>Продолжительность засыпания, мин.</label>
+    <input type="number" id="cfgSleepLength" min="0" max="255" value="90">
+  </div>
+
+  <div class="card">
+    <div class="section-title">Сигнал «пора спать»</div>
+    <div class="row">
+      <span class="label">Вспышки в начале интервала</span>
+      <label class="switch"><input type="checkbox" id="cfgSignalEnabled"><span class="slider-sw"></span></label>
+    </div>
+    <label style="margin-top:8px">Яркость вспышек</label>
+    <input type="range" id="cfgSignalBrightness" min="0" max="255" value="255">
+    <div class="hint info" id="signalHint">Вспышки идут первые 5 минут после наступления времени отхода ко сну. Эта же яркость — стартовая для затухания.</div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Затухание при засыпании</div>
+    <div class="row">
+      <span class="label">Плавно гасить за время засыпания</span>
+      <label class="switch"><input type="checkbox" id="cfgDimEnabled"><span class="slider-sw"></span></label>
+    </div>
+    <div class="hint info">Яркость падает по параболе: быстро в начале, почти незаметно в конце.</div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Имитация рассвета</div>
+    <div class="row">
+      <span class="label">Включить режим</span>
+      <label class="switch"><input type="checkbox" id="cfgSunriseEnabled"><span class="slider-sw"></span></label>
+    </div>
+    <label style="margin-top:8px">Время начала рассвета</label>
+    <input type="time" id="cfgSunriseTime" value="07:00">
+    <label>Продолжительность рассвета, мин.</label>
+    <input type="number" id="cfgSunriseLength" min="0" max="255" value="60">
+    <label>Держать максимум после рассвета, мин.</label>
+    <input type="number" id="cfgSunLength" min="0" max="255" value="30">
+    <label>Максимальная яркость</label>
+    <input type="range" id="cfgSunriseBrightness" min="0" max="255" value="255">
+  </div>
+
+  <div class="card">
+    <button class="btn btn-primary" onclick="saveConfig()">Сохранить</button>
+    <button class="btn btn-outline" onclick="restartDevice()">Перезагрузить устройство</button>
+    <button class="btn btn-danger" onclick="forgetWiFi()">Забыть сеть и поднять точку доступа</button>
+    <div class="hint info">«Забыть сеть» нужен, если роутер сменился и портал больше не открывается: устройство поднимет свою точку доступа, и настройки можно будет ввести заново.</div>
+  </div>
+
+</div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ======== WebSocket ========
+let ws = null;
+let state = null;
+let reconnectTimer = null;
+
+function connectWS() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
+
+  ws.onopen = () => {
+    document.getElementById('headerSub').textContent = 'На связи';
+    ws.send(JSON.stringify({type: 'getFullState'}));
+  };
+
+  ws.onclose = () => {
+    document.getElementById('headerSub').textContent = 'Переподключение...';
+    ws = null;
+    if (!reconnectTimer) {
+      reconnectTimer = setTimeout(() => { reconnectTimer = null; connectWS(); }, 3000);
+    }
+  };
+
+  ws.onmessage = (e) => {
+    try { handleMessage(JSON.parse(e.data)); }
+    catch (err) { console.error('[WS] Ошибка разбора:', err); }
+  };
+}
+
+function handleMessage(msg) {
+  switch (msg.type) {
+    // Состояние приходит двумя сообщениями: fullState заводит объект,
+    // configState подмешивается, не затирая уже полученное.
+    case 'fullState':
+      state = Object.assign(state || {}, msg);
+      updateDashboard();
+      break;
+    case 'configState':
+      if (!state) state = {};
+      state.config = msg.config;
+      updateSettings();
+      break;
+    case 'telemetry':
+      if (!state) return;
+      Object.assign(state, msg);
+      updateDashboard();
+      break;
+    case 'saveConfigResult':
+      if (msg.success) { setSettingsDirty(false); showErrors([]); }
+      showToast(msg.message || 'Сохранено');
+      break;
+  }
+}
+
+// ======== Dashboard ========
+function updateDashboard() {
+  if (!state) return;
+
+  document.getElementById('apBadge').classList.toggle('hidden', !state.ap_mode);
+  document.getElementById('headerSub').textContent = state.device || 'SmartNightLight';
+
+  const b = state.brightness || 0;
+  document.getElementById('lampValue').textContent = Math.round(b / 255 * 100) + '%';
+  document.getElementById('lampMode').textContent = modeLabel(state.mode) + ' · ' + b + '/255';
+  const glow = document.getElementById('lampGlow');
+  // Воспринимаемая яркость нелинейна: без корня слабое свечение
+  // на экране выглядит темнее, чем светильник в комнате.
+  glow.style.opacity = b === 0 ? 0.08 : (0.15 + 0.85 * Math.sqrt(b / 255));
+  glow.style.boxShadow = b === 0 ? 'none' : '0 0 ' + Math.round(b / 8) + 'px rgba(255,179,0,.6)';
+
+  // Ручные органы управления не трогаем, пока пользователь их держит
+  if (!manualTouching) {
+    document.getElementById('manualOn').checked = !!state.manual_on;
+    const slider = document.getElementById('manualBrightness');
+    if (document.activeElement !== slider && state.config) {
+      slider.value = state.config.manualBrightness;
+    }
+    document.getElementById('manualBrightnessLabel').textContent = slider.value;
+  }
+
+  const hhmm = state.time_hhmm || 0;
+  document.getElementById('sysTime').textContent = state.time_valid
+    ? pad(Math.floor(hhmm / 100)) + ':' + pad(hhmm % 100) + ':' + pad(state.time_sec || 0)
+    : '--:--:--';
+  document.getElementById('sysDate').textContent = state.time_valid
+    ? pad(state.date_day) + '.' + pad(state.date_month) + '.' + state.date_year
+    : '--';
+  document.getElementById('timeWarn').classList.toggle('hidden', !!state.time_valid);
+
+  const connected = state.wifi === 'connected';
+  document.getElementById('sysWiFi').innerHTML = connected
+    ? '<span class="badge ok">Подключено</span>'
+    : '<span class="badge ' + (state.ap_mode ? 'warn' : 'err') + '">'
+      + (state.ap_mode ? 'Точка доступа' : 'Нет связи') + '</span>';
+  document.getElementById('sysRSSI').textContent = connected ? state.wifi_rssi + ' dBm' : '--';
+  document.getElementById('sysIPLabel').textContent = state.ap_mode ? 'Точка доступа' : 'IP-адрес';
+  document.getElementById('sysIP').textContent = state.ap_mode
+    ? (state.ap_ssid || '192.168.0.1')
+    : (state.ip || '--');
+  document.getElementById('sysName').textContent = state.device || '--';
+  document.getElementById('sysUptime').textContent = formatUptime(state.uptime || 0);
+  document.getElementById('sysHeap').textContent = state.heap
+    ? (state.heap / 1024).toFixed(1) + ' КБ' : '--';
+
+  document.getElementById('apHint').classList.toggle('hidden', !state.ap_mode);
+}
+
+function modeLabel(mode) {
+  return {
+    off: 'Погашен',
+    manual: 'Ручное включение',
+    signal: 'Сигнал «пора спать»',
+    dim: 'Затухание',
+    sleep: 'Интервал сна',
+    sunrise: 'Рассвет'
+  }[mode] || '--';
+}
+
+function pad(n) { return String(n).padStart(2, '0'); }
+
+function formatUptime(sec) {
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600);
+  const m = Math.floor(sec % 3600 / 60);
+  if (d > 0) return d + ' д ' + h + ' ч';
+  if (h > 0) return h + ' ч ' + m + ' мин';
+  return m + ' мин';
+}
+
+// ======== Ручное управление ========
+// Ползунок шлёт значение на каждое движение. Без ограничения очередь
+// WebSocket на ESP8266 (8 сообщений) переполняется за пару секунд.
+let manualTouching = false;
+let manualTimer = null;
+
+function onBrightnessInput() {
+  manualTouching = true;
+  const v = document.getElementById('manualBrightness').value;
+  document.getElementById('manualBrightnessLabel').textContent = v;
+  if (manualTimer) return;
+  manualTimer = setTimeout(() => { manualTimer = null; sendManual(); }, 150);
+}
+
+function sendManual() {
+  manualTouching = false;
+  if (!ws || ws.readyState !== WebSocket.OPEN) { showToast('Нет связи с устройством'); return; }
+  ws.send(JSON.stringify({
+    type: 'setManual',
+    on: document.getElementById('manualOn').checked,
+    brightness: parseInt(document.getElementById('manualBrightness').value, 10)
+  }));
+}
+
+// ======== Настройки ========
+// Телеметрия приходит раз в секунду. Если перерисовывать форму на
+// каждый кадр, незаконченный ввод затирался бы прямо под руками.
+let settingsDirty = false;
+
+function setSettingsDirty(v) { settingsDirty = v; }
+
+document.querySelectorAll('#tab-settings input').forEach(el => {
+  el.addEventListener('input', () => setSettingsDirty(true));
+  el.addEventListener('change', () => setSettingsDirty(true));
+});
+
+function updateSettings() {
+  if (!state || !state.config || settingsDirty) return;
+  const c = state.config;
+
+  document.getElementById('cfgSSID').value = c.wifiSSID || '';
+  document.getElementById('cfgDeviceName').value = c.deviceName || '';
+  document.getElementById('cfgDeviceName').placeholder = c.defaultDeviceName || '';
+  document.getElementById('cfgTz').value = c.tzOffsetMinutes;
+
+  const f = c.flags || 0;
+  document.getElementById('cfgSleepEnabled').checked = !!(f & 0x01);
+  document.getElementById('cfgSignalEnabled').checked = !!(f & 0x02);
+  document.getElementById('cfgDimEnabled').checked = !!(f & 0x04);
+  document.getElementById('cfgSunriseEnabled').checked = !!(f & 0x08);
+
+  document.getElementById('cfgSleepTime').value = hhmmToInput(c.sleepTime);
+  document.getElementById('cfgSleepLength').value = c.sleepLength;
+  document.getElementById('cfgSignalBrightness').value = c.signalBrightness;
+  document.getElementById('cfgSunriseTime').value = hhmmToInput(c.sunriseTime);
+  document.getElementById('cfgSunriseLength').value = c.sunriseLength;
+  document.getElementById('cfgSunLength').value = c.sunLength;
+  document.getElementById('cfgSunriseBrightness').value = c.sunriseBrightness;
+
+  if (c.signalMinutes !== undefined) {
+    document.getElementById('signalHint').textContent =
+      'Вспышки идут первые ' + c.signalMinutes +
+      ' минут после наступления времени отхода ко сну. Эта же яркость — стартовая для затухания.';
+  }
+}
+
+function hhmmToInput(hhmm) {
+  hhmm = hhmm || 0;
+  return pad(Math.floor(hhmm / 100)) + ':' + pad(hhmm % 100);
+}
+
+function inputToHhmm(id, errors, label) {
+  const v = document.getElementById(id).value;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v || '');
+  if (!m) { errors.push(label + ': неверное время'); markError(id); return 0; }
+  const h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+  if (h > 23 || mi > 59) { errors.push(label + ': неверное время'); markError(id); return 0; }
+  return h * 100 + mi;
+}
+
+// parseInt(x) || d съедает валидный ноль, поэтому проверяем явно
+function num(id, label, def, opts, errors) {
+  const el = document.getElementById(id);
+  const raw = (el.value || '').trim();
+  if (raw === '') return def;
+  const v = Number(raw.replace(',', '.'));
+  if (!isFinite(v)) { errors.push(label + ': не число'); markError(id); return def; }
+  if (opts.min !== undefined && v < opts.min) { errors.push(label + ': минимум ' + opts.min); markError(id); return def; }
+  if (opts.max !== undefined && v > opts.max) { errors.push(label + ': максимум ' + opts.max); markError(id); return def; }
+  return Math.round(v);
+}
+
+function markError(id) { document.getElementById(id).classList.add('field-error'); }
+
+function showErrors(errors) {
+  document.querySelectorAll('.field-error').forEach(el => el.classList.remove('field-error'));
+  const box = document.getElementById('settingsErrors');
+  box.innerHTML = errors.length
+    ? '<div class="hint warn">' + errors.map(e => '• ' + e).join('<br>') + '</div>'
+    : '';
+}
+
+function collectConfig(errors) {
+  let flags = 0;
+  if (document.getElementById('cfgSleepEnabled').checked) flags |= 0x01;
+  if (document.getElementById('cfgSignalEnabled').checked) flags |= 0x02;
+  if (document.getElementById('cfgDimEnabled').checked) flags |= 0x04;
+  if (document.getElementById('cfgSunriseEnabled').checked) flags |= 0x08;
+
+  return {
+    wifiSSID: document.getElementById('cfgSSID').value,
+    // Пустой пароль = оставить прежний: сервер его не отдаёт, и поле
+    // в форме всегда пустое
+    wifiPass: document.getElementById('cfgPass').value,
+    deviceName: document.getElementById('cfgDeviceName').value,
+    tzOffsetMinutes: num('cfgTz', 'Часовой пояс', 180, {min: -720, max: 840}, errors),
+    flags: flags,
+    manualBrightness: parseInt(document.getElementById('manualBrightness').value, 10),
+    sleepTime: inputToHhmm('cfgSleepTime', errors, 'Время отхода ко сну'),
+    sleepLength: num('cfgSleepLength', 'Продолжительность засыпания', 90, {min: 0, max: 255}, errors),
+    signalBrightness: parseInt(document.getElementById('cfgSignalBrightness').value, 10),
+    sunriseTime: inputToHhmm('cfgSunriseTime', errors, 'Время рассвета'),
+    sunriseLength: num('cfgSunriseLength', 'Продолжительность рассвета', 60, {min: 0, max: 255}, errors),
+    sunLength: num('cfgSunLength', 'Время после рассвета', 30, {min: 0, max: 255}, errors),
+    sunriseBrightness: parseInt(document.getElementById('cfgSunriseBrightness').value, 10),
+  };
+}
+
+function saveConfig() {
+  const errors = [];
+  const cfg = collectConfig(errors);
+  showErrors(errors);
+  if (errors.length) { showToast('Исправьте отмеченные поля'); return; }
+  if (!ws || ws.readyState !== WebSocket.OPEN) { showToast('Нет связи с устройством'); return; }
+  ws.send(JSON.stringify({type: 'saveConfig', config: cfg}));
+  showToast('Сохраняю...');
+}
+
+function restartDevice() {
+  if (!confirm('Перезагрузить устройство?')) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) { showToast('Нет связи с устройством'); return; }
+  ws.send(JSON.stringify({type: 'restart'}));
+  showToast('Перезагружаю...');
+}
+
+function forgetWiFi() {
+  if (!confirm('Забыть сохранённую сеть? Устройство перезагрузится и поднимет свою точку доступа.')) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) { showToast('Нет связи с устройством'); return; }
+  ws.send(JSON.stringify({type: 'forgetWiFi'}));
+}
+
+// ======== Вкладки ========
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// ======== Toast ========
+let toastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// ======== Старт ========
+connectWS();
+
+setInterval(() => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) connectWS();
+  else if (!settingsDirty) ws.send(JSON.stringify({type: 'getFullState'}));
+}, 30000);
+</script>
+</body>
+</html>
