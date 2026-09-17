@@ -63,6 +63,10 @@ pio test -e native           # тесты логики на хосте
 
 ## Как это устроено
 
+Подробная документация — в [docs/_index.md](docs/_index.md): архитектура,
+модули, протокол, подводные камни. Правила работы над проектом — в
+[CLAUDE.md](CLAUDE.md), история изменений — в [CHAT_SUMMARY.md](CHAT_SUMMARY.md).
+
 | Файл | Что внутри |
 |------|-----------|
 | [src/Wemos_Mini.ino](src/Wemos_Mini.ino) | setup/loop, WiFi (STA и точка доступа), веб-сервер, WebSocket |
