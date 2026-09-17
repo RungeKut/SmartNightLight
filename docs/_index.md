@@ -21,9 +21,13 @@
 | — логика светильника (`src/NightLight.h`) | `docs/modules/nightlight.md` |
 | — настройки в EEPROM (`src/ConfigStore.h`) | `docs/modules/config.md` |
 | — WiFi: точка доступа и клиент | `docs/modules/wifi.md` |
+| — микрофон и реакция на шум (`src/SoundSensor.h`) | `docs/modules/sound.md` |
+| — Home Assistant через MQTT (`src/MqttClient.h`) | `docs/modules/mqtt.md` |
+| — подтверждение прошивки (`src/FailsafeOTA.h`) | описано в `docs/build-flash.md` |
 | — логирование (`src/Log.h`) | описано в `docs/modules/core-loop.md` |
 | — сборка WS-сообщений (`src/WsRxBuffer.h`) | описано в `docs/websocket.md` |
 | Протокол WebSocket и HTTP API | `docs/websocket.md` |
+| Метрики для Prometheus | `docs/metrics.md` |
 | Фронтенд (SPA, вкладки) | `docs/frontend.md` |
 | Сборка, прошивка, OTA | `docs/build-flash.md` |
 | Тесты на хосте | `docs/testing.md` |
@@ -31,6 +35,7 @@
 | История изменений | `../CHAT_SUMMARY.md` |
 | Разбор крупных заходов | `docs/sessions/*.md` |
 | — порт на PlatformIO, 17.09.2026 | `docs/sessions/2026-09-17-wifi-provisioning-port.md` |
+| — шум, MQTT и метрики, 17.09.2026 | `docs/sessions/2026-09-17-sound-mqtt-metrics.md` |
 
 ---
 

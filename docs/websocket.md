@@ -38,6 +38,11 @@ ArduinoJson 7.x на устройстве.
 | `mode` | `off`, `manual`, `signal`, `dim`, `sleep`, `sunrise` |
 | `time_valid` | пришло ли время с NTP; если `false`, расписание не работает |
 | `ws_drops` | отброшенные куски входящих сообщений, см. `WsRxBuffer` |
+| `sound_level` / `sound_peak` | размах с микрофона: текущий и за минуту |
+| `sound_present` | микрофон отвечает; `false` — вход болтается |
+| `sound_active` | отклик на шум идёт прямо сейчас |
+| `mqtt_error` | почему брокер отказал, текстом |
+| `ota_pending` / `ota_remaining` | прошивка ждёт подтверждения |
 | `config_pending` | есть несохранённые настройки, ждут отложенной записи |
 
 ### `telemetry`
@@ -132,6 +137,12 @@ EEPROM пустыми, поэтому запрос без него отклон�
 
 Перезагрузить устройство.
 
+### `confirmOta`
+
+Подтвердить, что новая прошивка работает. Без подтверждения устройство
+через пять минут перезагрузится один раз — см. `docs/build-flash.md`.
+То же делает `GET /confirm` и кнопка в Home Assistant.
+
 ### `forgetWiFi`
 
 Забыть сеть и поднять точку доступа. См. `docs/modules/wifi.md`.
@@ -172,6 +183,8 @@ if (info->final && info->index == 0 && info->len == len) { ... }   // так н�
 |---------|-----------|
 | `GET /` | SPA из LittleFS, `Cache-Control: no-cache` |
 | `GET /api.json` | снимок состояния, те же поля, что `fullState` |
+| `GET /metrics` | метрики Prometheus, см. `docs/metrics.md` |
+| `GET /confirm` | подтвердить прошивку после OTA |
 | всё остальное | отдаётся `index.html` (SPA-роутинг) |
 
 Кэш отключён потому, что после `uploadfs` страница должна обновиться сразу, а
