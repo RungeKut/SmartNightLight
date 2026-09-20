@@ -571,6 +571,10 @@ void fillSystemState(JsonDocument &doc) {
   doc["sound_in_window"] = timeValid && nl::insideWindow(
       config.data.soundStart, config.data.soundEnd, nowHhmm);
   doc["sound_present"] = sound.present();
+  doc["sound_floor"] = sound.noiseFloor();
+  doc["sound_samples"] = sound.samples();
+  doc["sound_rate_hz"] = sound.sampleRateHz();
+  doc["sound_recent"] = sound.recentPeak();
   doc["sound_active"] = soundActive;
   doc["sound_target"] = soundActive ? soundTarget : 0;
 

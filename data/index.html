@@ -266,10 +266,13 @@ input[type=range] { width: 100%; accent-color: var(--primary); margin: 6px 0 2px
       <div class="mark" id="soundMark" style="left:0"></div>
     </div>
     <div class="meter-legend"><span>0</span><span id="soundThresholdLabel">порог --</span><span>1023</span></div>
+    <div class="row"><span class="label">Уровень покоя</span><span id="soundFloor">--</span></div>
     <div class="row"><span class="label">Пик за минуту</span><span id="soundPeak">--</span></div>
+    <div class="row"><span class="label">Частота выборки</span><span id="soundRate">--</span></div>
     <div class="row"><span class="label">Событий в ночном окне</span><span id="soundTriggers">--</span></div>
     <div class="row"><span class="label">Событий вне окна</span><span id="soundTriggersOut">--</span></div>
     <div class="row"><span class="label">Состояние</span><span id="soundState">--</span></div>
+    <div id="soundAdvice" class="hint warn"></div>
     <div id="soundHint" class="hint info">
       Счётчики считают события, а не измерения: шум, отделённый от предыдущего
       паузой в 30 секунд. Оба идут круглосуточно — окно решает лишь, в какой из
@@ -596,6 +599,37 @@ function updateSound() {
   document.getElementById('soundThresholdLabel').textContent = 'порог ' + threshold;
   document.getElementById('soundPeak').textContent = state.sound_peak !== undefined
     ? state.sound_peak : '--';
+  document.getElementById('soundFloor').textContent = state.sound_floor !== undefined
+    ? state.sound_floor : '--';
+  document.getElementById('soundRate').textContent = state.sound_rate_hz
+    ? (state.sound_rate_hz + ' Гц (' + state.sound_samples + ' отсч./окно)') : '--';
+
+  // Подсказка по порогу считается от реального фона, а не берётся из
+  // головы: фон зависит и от усиления, и от комнаты
+  const floor = state.sound_floor;
+  const recent = state.sound_recent;
+  const hint = document.getElementById('soundAdvice');
+  if (hint && floor !== undefined && recent !== undefined) {
+    // Порог сравнивается с максимумом за последние 0.6 с, а не с
+    // мгновенным уровнем, — значит и отталкиваться надо от него.
+    // В тишине он заметно выше минимума: фон гуляет.
+    const rec = Math.max(recent * 2, floor * 4, 30);
+    let text = 'Фон ' + floor + ', за 0.6 с ' + recent
+             + ', пик за минуту ' + state.sound_peak + '. ';
+    if (threshold && threshold <= recent) {
+      text += 'Порог ' + threshold + ' ниже фонового всплеска — ложные '
+            + 'срабатывания. Поднимите примерно до ' + rec + '.';
+      hint.className = 'hint warn';
+    } else if (threshold && threshold > state.sound_peak) {
+      text += 'Порог ' + threshold + ' выше всего, что микрофон слышал за '
+            + 'минуту, — сработать нечему.';
+      hint.className = 'hint warn';
+    } else {
+      text += 'Порог ' + threshold + ' лежит между фоном и пиком — похоже на правду.';
+      hint.className = 'hint info';
+    }
+    hint.textContent = text;
+  }
   document.getElementById('soundTriggers').textContent = state.sound_triggers !== undefined
     ? state.sound_triggers : '--';
   document.getElementById('soundTriggersOut').textContent = state.sound_triggers_out !== undefined

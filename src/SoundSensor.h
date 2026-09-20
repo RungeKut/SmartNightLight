@@ -36,9 +36,11 @@
 // звука, который нас интересует, и при этом loop() не встаёт
 // настолько, чтобы это было заметно.
 #define SOUND_WINDOW_MS 20
-// Между измерениями: чаще незачем, а АЦП при работающем WiFi лучше
-// не дёргать без нужды.
-#define SOUND_PERIOD_MS 100
+// Период между окнами. Задаёт СКВАЖНОСТЬ измерения: при 100 мс мы
+// слушали лишь 20% времени, и короткий звук вроде шага (50-100 мс) с
+// большой вероятностью проходил мимо — попадал в паузу между окнами.
+// 40 мс дают половину времени под наблюдением.
+#define SOUND_PERIOD_MS 40
 
 // Кольцо пиков для скользящего максимума. Prometheus опрашивает раз в
 // десятки секунд, и мгновенный уровень в момент опроса почти ничего
@@ -55,6 +57,13 @@
 // «тихо в комнате» и «вход болтается».
 #define SOUND_PRESENCE_MIN 4
 
+// Сколько последних окон держим для детектирования. Даже при 50%
+// скважности короткий звук может попасть в паузу между окнами, и
+// решение по ОДНОМУ последнему окну теряло бы половину шагов.
+// 16 окон по 40 мс — это примерно 0.6 секунды: на таком отрезке
+// шаг или скрип двери не пропустить.
+#define SOUND_RECENT_WINDOWS 16
+
 class SoundSensor {
 private:
   uint8_t  _pin;
@@ -66,12 +75,22 @@ private:
   uint32_t _lastSampleMs;
   uint32_t _triggers;     // событий внутри ночного окна
   uint32_t _triggersOut;  // событий за его пределами
+  uint16_t _samples;      // сколько отсчётов уместилось в последнее окно
+  uint16_t _floor;        // минимальный размах за минуту — уровень покоя
+  uint16_t _floorBuckets[SOUND_PEAK_BUCKETS];
+  uint16_t _recent[SOUND_RECENT_WINDOWS];
+  uint8_t  _recentIdx;
 
 public:
   SoundSensor()
     : _pin(A0), _level(0), _peakWindow(0), _bucket(0),
-      _lastBucketMs(0), _lastSampleMs(0), _triggers(0), _triggersOut(0) {
-    for (uint8_t i = 0; i < SOUND_PEAK_BUCKETS; i++) _buckets[i] = 0;
+      _lastBucketMs(0), _lastSampleMs(0), _triggers(0), _triggersOut(0),
+      _samples(0), _floor(0), _recentIdx(0) {
+    for (uint8_t i = 0; i < SOUND_PEAK_BUCKETS; i++) {
+      _buckets[i] = 0;
+      _floorBuckets[i] = 1023;
+    }
+    for (uint8_t i = 0; i < SOUND_RECENT_WINDOWS; i++) _recent[i] = 0;
   }
 
   void begin() {
@@ -100,16 +119,37 @@ public:
     }
 
     _level = (hi >= lo) ? (hi - lo) : 0;
+    _samples = samples;
+
+    _recent[_recentIdx] = _level;
+    _recentIdx = (_recentIdx + 1) % SOUND_RECENT_WINDOWS;
 
     rotateBuckets(now);
     if (_level > _buckets[_bucket]) _buckets[_bucket] = _level;
+    if (_level < _floorBuckets[_bucket]) _floorBuckets[_bucket] = _level;
     recomputePeak();
     return true;
   }
 
-  // Порог превышен в последнем измерении
+  // Громче порога за последние полсекунды.
+  //
+  // Решение принимается по максимуму нескольких окон, а не по одному
+  // последнему: между окнами есть паузы, и короткий звук легко в них
+  // проваливается. Для показа в интерфейсе по-прежнему служит level().
   bool exceeded(uint16_t threshold) const {
-    return threshold > 0 && _level >= threshold;
+    if (threshold == 0) return false;
+    for (uint8_t i = 0; i < SOUND_RECENT_WINDOWS; i++) {
+      if (_recent[i] >= threshold) return true;
+    }
+    return false;
+  }
+
+  uint16_t recentPeak() const {
+    uint16_t m = 0;
+    for (uint8_t i = 0; i < SOUND_RECENT_WINDOWS; i++) {
+      if (_recent[i] > m) m = _recent[i];
+    }
+    return m;
   }
 
   // Два счётчика, а не один: ночная активность и дневная — разные
@@ -125,6 +165,19 @@ public:
   uint32_t triggers() const { return _triggers; }
   uint32_t triggersOutside() const { return _triggersOut; }
 
+  // Сколько отсчётов успел взять АЦП за окно. Делённое на длительность
+  // окна даёт фактическую частоту выборки — её не угадать по
+  // даташиту: analogRead() на ESP8266 ждёт готовности преобразования,
+  // и сколько это займёт, зависит от занятости WiFi-стека.
+  uint16_t samples() const { return _samples; }
+  uint16_t sampleRateHz() const {
+    return (uint16_t)((uint32_t)_samples * 1000UL / SOUND_WINDOW_MS);
+  }
+
+  // Уровень покоя: минимальный размах за минуту. Порог осмысленно
+  // ставить между ним и тем, что дают шаги, — а не «на глаз».
+  uint16_t noiseFloor() const { return _floor; }
+
   // Оценка по текущему пику, а не по факту "когда-либо был сигнал":
   // отвалившийся провод так виден сразу, а не до перезагрузки.
   bool present() const { return _peakWindow >= SOUND_PRESENCE_MIN; }
@@ -135,15 +188,19 @@ private:
       _lastBucketMs += SOUND_BUCKET_MS;
       _bucket = (_bucket + 1) % SOUND_PEAK_BUCKETS;
       _buckets[_bucket] = 0;
+      _floorBuckets[_bucket] = 1023;
     }
   }
 
   void recomputePeak() {
     uint16_t m = 0;
+    uint16_t f = 1023;
     for (uint8_t i = 0; i < SOUND_PEAK_BUCKETS; i++) {
       if (_buckets[i] > m) m = _buckets[i];
+      if (_floorBuckets[i] < f) f = _floorBuckets[i];
     }
     _peakWindow = m;
+    _floor = (f == 1023) ? 0 : f;
   }
 };
 
